@@ -2,6 +2,7 @@
 #include<stdlib.h>
 #include"matrix.h"
 #include<time.h>
+#include <cuda_runtime_api.h>
 #include<sys/time.h>
 
 // status printed and convergence check every ITER_CHECK iterations
