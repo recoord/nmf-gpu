@@ -30,9 +30,6 @@ void free_matrix_on_device(matrix *A);
 void destroy_matrix(matrix *A);
 
 // matrix analysis
-void print_matrix(matrix A);
-float matrix_difference_norm_d(action_t action, matrix a, matrix c, int *params);
-float matrix_div_d(action_t action, matrix a, matrix b, int *params);
 float nan_check_d(action_t action, matrix a, int *params);
 float zero_check_d(action_t action, matrix a, int *params);
 float zero_check(matrix a);

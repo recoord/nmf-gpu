@@ -28,6 +28,8 @@ matrix read_matrix(std::string file, cudaStream_t stream) {
     // read matrix in from file, store in column-major order
 
     matrix A;
+    A.mat_d = NULL;
+
     FILE *fp;
     size_t count;
 
@@ -35,14 +37,12 @@ matrix read_matrix(std::string file, cudaStream_t stream) {
     count = fread(A.dim, sizeof(int), 2, fp);
     if(count < 2) fprintf(stderr, "read_matrix: fread error\n");
 
-    int N = A.dim[0] * A.dim[1];
+    size_t N = A.dim[0] * A.dim[1];
     // cudaMallocHost((void**)&(A.mat),sizeof(float)*N); //page-locked memory (faster but limited)
     A.mat = (float *) malloc(sizeof(float) * N);
     count = fread(A.mat, sizeof(float), N, fp);
     if(count < N) fprintf(stderr, "read_matrix: fread error\n");
     fclose(fp);
-
-    A.mat_d = NULL;
 
     copy_matrix_to_device(&A, stream);
 
@@ -62,9 +62,8 @@ void write_matrix(matrix A, std::string file) {
     count = fwrite(A.dim, sizeof(int), 2, fp);
     if(count < 2) fprintf(stderr, "write_matrix: fwrite error\n");
 
-
     count = fwrite(A.mat, sizeof(float), A.dim[0] * A.dim[1], fp);
-    if(count < A.dim[0] * A.dim[1]) fprintf(stderr, "write_matrix: fwrite error\n");
+    if(count < (size_t) (A.dim[0] * A.dim[1])) fprintf(stderr, "write_matrix: fwrite error\n");
     fclose(fp);
 
     printf("write %s [%ix%i]\n", file.c_str(), A.dim[0], A.dim[1]);
@@ -326,384 +325,40 @@ void copy_matrix_on_device(matrix A, matrix B) {
         exit(1);
     }
 
-    err = cudaMemcpy(B.mat_d, A.mat_d, sizeof(float) * N, cudaMemcpyDeviceToDevice);
-    switch(err) {
-        case cudaErrorInvalidValue:
-            fprintf(stderr, "copy_matrix_on_device: cudaMemcpy: InvalidValue\n");
-            exit(1);
-            break;
-        case cudaErrorInvalidDevicePointer:
-            fprintf(stderr, "copy_matrix_on_device: cudaMemcpy: InvalidDevicePointer\n");
-            exit(1);
-            break;
-        case cudaErrorInvalidMemcpyDirection:
-            fprintf(stderr, "copy_matrix_on_device: cudaMemcpy: InvalidMemcpyDirection\n");
-            exit(1);
-            break;
-    }
+    cudaAssert(cudaMemcpy(B.mat_d, A.mat_d, sizeof(float) * N, cudaMemcpyDeviceToDevice));
 }
 
 void copy_matrix_from_device(matrix *A) {
-
-    const int N = A->dim[0] * A->dim[1];
+    size_t size = A->dim[0] * A->dim[1] * sizeof(float);
 
     if(A->mat_d == NULL) {
         fprintf(stderr, "copy_matrix_from_device: matrix not allocated on device\n");
         exit(1);
     }
-    if(A->mat == NULL) cudaMallocHost((void **) &(A->mat), sizeof(float) * N);
-    // A->mat = (float*)malloc(sizeof(float)*N);
 
-    cudaError_t err;
-    err = cudaMemcpy(A->mat, A->mat_d, sizeof(float) * N, cudaMemcpyDeviceToHost);
-    switch(err) {
-        case cudaErrorInvalidValue:
-            fprintf(stderr, "copy_matrix_from_device: cudaMemcpy: InvalidValue\n");
-            exit(1);
-            break;
-        case cudaErrorInvalidDevicePointer:
-            fprintf(stderr, "copy_matrix_from_device: cudaMemcpy: InvalidDevicePointer\n");
-            exit(1);
-            break;
-        case cudaErrorInvalidMemcpyDirection:
-            fprintf(stderr, "copy_matrix_from_device: cudaMemcpy: InvalidMemcpyDirection\n");
-            exit(1);
-            break;
+    if(A->mat == NULL){
+        cudaMallocHost((void **) &(A->mat), size);
     }
-}
 
-void print_matrix(matrix A) {
-    int i, j;
-    printf("\n");
-    const int lda = A.dim[0];
-    const int tda = A.dim[1];
-    for(i = 0; i < lda; i++) {
-        for(j = 0; j < tda; j++) {
-            printf("% 5.5g ", A.mat[i + A.dim[0] * j]);
-        }
-        printf("\n");
-    }
-    printf("\n");
+    cudaAssert(cudaMemcpy(A->mat, A->mat_d, size, cudaMemcpyDeviceToHost));
 }
 
 void matrix_multiply_d(matrix a, matrix b, matrix c) {
-
+    // TODO: Is this the legacy API?
     cublasSgemm('N', 'N', c.dim[0], c.dim[1], a.dim[1], 1, a.mat_d, a.dim[0], b.mat_d, b.dim[0], 0, c.mat_d, c.dim[0]);
-    if(cublasGetError() != CUBLAS_STATUS_SUCCESS) {
-        fprintf(stderr, "matrix_multiply_d: NOT SUCCESS\n");
-        exit(1);
-    }
+    cudaAssert(cublasGetError());
 }
 
 void matrix_multiply_AtB_d(matrix a, matrix b, matrix c) {
-
+    // TODO: Is this the legacy API?
     cublasSgemm('T', 'N', c.dim[0], c.dim[1], b.dim[0], 1, a.mat_d, a.dim[0], b.mat_d, b.dim[0], 0, c.mat_d, c.dim[0]);
-    if(cublasGetError() != CUBLAS_STATUS_SUCCESS) {
-        fprintf(stderr, "matrix_multiply_AtB_d: NOT SUCCESS\n");
-        exit(1);
-    }
+    cudaAssert(cublasGetError());
 }
 
 void matrix_multiply_ABt_d(matrix a, matrix b, matrix c) {
-
+    // TODO: Is this the legacy API?
     cublasSgemm('N', 'T', c.dim[0], c.dim[1], a.dim[1], 1, a.mat_d, a.dim[0], b.mat_d, b.dim[0], 0, c.mat_d, c.dim[0]);
-    cublasStatus err = cublasGetError();
-    if(err != CUBLAS_STATUS_SUCCESS) {
-        fprintf(stderr, "matrix_multiply_ABt_d: NOT SUCCESS [%i]\n", err);
-        switch(err) {
-            case CUBLAS_STATUS_NOT_INITIALIZED:
-                fprintf(stderr, "CUBLAS_STATUS_NOT_INITIALIZED\n");
-                break;
-            case CUBLAS_STATUS_ALLOC_FAILED:
-                fprintf(stderr, "CUBLAS_STATUS_ALLOC_FAILED\n");
-                break;
-            case CUBLAS_STATUS_INVALID_VALUE:
-                fprintf(stderr, "CUBLAS_STATUS_INVALID_VALUE\n");
-                break;
-            case CUBLAS_STATUS_MAPPING_ERROR:
-                fprintf(stderr, "CUBLAS_STATUS_MAPPING_ERROR\n");
-                break;
-            case CUBLAS_STATUS_EXECUTION_FAILED:
-                fprintf(stderr, "CUBLAS_STATUS_EXECUTION_FAILED\n");
-                break;
-        }
-        exit(1);
-    }
-}
-
-float matrix_difference_norm_d(action_t action, matrix a, matrix b, int *params) {
-    // memory allocated and not freed
-    // block1 - block size for first reduction level
-    // block2 - "" for 2nd "" (set to 1 if not using 2nd level)
-    // lapt1 - load/adds per thread for first red. lev.
-    // lapt2 - "" for 2nd ""
-    int block1 = params[0];
-    int block2 = params[2];
-    int lapt1 = params[1];
-    int lapt2 = params[3];
-
-    static int r1size = 0;
-    static float *r1 = NULL;
-    static float *result_d = NULL;
-    if(action == cleanup) {
-        if(r1 != NULL) {
-            cudaFree(r1);
-            r1 = NULL;
-        }
-        if(result_d != NULL) {
-            cudaFree(result_d);
-            result_d = NULL;
-        }
-        r1size = 0;
-        return 0;
-    }
-
-    if(a.dim[0] != b.dim[0] || a.dim[1] != b.dim[1]) {
-        fprintf(stderr, "matrix_difference_norm_d: dimension error\n");
-        exit(1);
-    }
-
-    const int N = a.dim[0] * a.dim[1]; // size of each reduction
-
-    dim3 dimBlock(block1);
-    dim3 dimGrid((N / (block1 * lapt1)) + (!(N % (block1 * lapt1)) ? 0 : 1));
-
-    dim3 dimBlock2(block2, 1);
-    dim3 dimGrid2((dimGrid.x / (block2 * lapt2)) + (!(dimGrid.x % (block2 * lapt2)) ? 0 : 1), 2);
-
-    // printf("1: %i %i %i %i\n",dimBlock.x,dimBlock.y, dimGrid.x, dimGrid.y);
-    // printf("2: %i %i %i %i\n",dimBlock2.x,dimBlock2.y, dimGrid2.x, dimGrid2.y);
-
-    // allocate memory for first level reduction
-    if(result_d == NULL) cudaMalloc((void **) &result_d, sizeof(float) * 2);
-    if(r1size < dimGrid.x * 2) {
-        if(r1 != NULL) cudaFree(r1);
-        r1size = dimGrid.x * 2;
-        cudaMalloc((void **) &r1, sizeof(float) * r1size);
-    }
-
-    if(block2 <= 1) { // if we only need one level of reduction
-        if(dimGrid.x > 1) {
-            fprintf(stderr, "matrix_difference_norm_d: dimGrid.x > 1\n");
-            exit(1);
-        }
-        switch(block1) {
-            case 512:
-                reduce1DDiff<512><<<dimGrid, dimBlock, 2 * dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, result_d, N);
-                break;
-            case 256:
-                reduce1DDiff<256><<<dimGrid, dimBlock, 2 * dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, result_d, N);
-                break;
-            case 128:
-                reduce1DDiff<128><<<dimGrid, dimBlock, 2 * dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, result_d, N);
-                break;
-            case 64:
-                reduce1DDiff<64><<<dimGrid, dimBlock, 2 * dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, result_d, N);
-                break;
-            case 32:
-                reduce1DDiff<32><<<dimGrid, dimBlock, 2 * dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, result_d, N);
-                break;
-            case 16:
-                reduce1DDiff<16><<<dimGrid, dimBlock, 2 * dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, result_d, N);
-                break;
-            case 8:
-                reduce1DDiff<8><<<dimGrid, dimBlock, 2 * dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, result_d, N);
-                break;
-        }
-    } else { // if we need two levels of reduction
-        if(dimGrid2.x > 1) {
-            fprintf(stderr, "matrix_difference_norm_d: dimGrid2.x > 1\n");
-            exit(1);
-        }
-        switch(block1) {
-            case 512:
-                reduce1DDiff<512><<<dimGrid, dimBlock, 2 * dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, r1, N);
-                break;
-            case 256:
-                reduce1DDiff<256><<<dimGrid, dimBlock, 2 * dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, r1, N);
-                break;
-            case 128:
-                reduce1DDiff<128><<<dimGrid, dimBlock, 2 * dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, r1, N);
-                break;
-            case 64:
-                reduce1DDiff<64><<<dimGrid, dimBlock, 2 * dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, r1, N);
-                break;
-            case 32:
-                reduce1DDiff<32><<<dimGrid, dimBlock, 2 * dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, r1, N);
-                break;
-            case 16:
-                reduce1DDiff<16><<<dimGrid, dimBlock, 2 * dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, r1, N);
-                break;
-            case 8:
-                reduce1DDiff<8><<<dimGrid, dimBlock, 2 * dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, r1, N);
-                break;
-        }
-        switch(block2) {
-            case 512:
-                reduce2D<512><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float)>>>(r1, result_d, dimGrid.x);
-                break;
-            case 256:
-                reduce2D<256><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float)>>>(r1, result_d, dimGrid.x);
-                break;
-            case 128:
-                reduce2D<128><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float)>>>(r1, result_d, dimGrid.x);
-                break;
-            case 64:
-                reduce2D<64><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float)>>>(r1, result_d, dimGrid.x);
-                break;
-            case 32:
-                reduce2D<32><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float)>>>(r1, result_d, dimGrid.x);
-                break;
-            case 16:
-                reduce2D<16><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float)>>>(r1, result_d, dimGrid.x);
-                break;
-            case 8:
-                reduce2D<8><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float)>>>(r1, result_d, dimGrid.x);
-                break;
-        }
-    }
-
-    float result[2];
-    cudaMemcpy(result, result_d, 2 * sizeof(float), cudaMemcpyDeviceToHost);
-    return result[0] / result[1];
-}
-
-float matrix_div_d(action_t action, matrix a, matrix b, int *params) {
-    // memory allocated and not freed
-    // block1 - block size for first reduction level
-    // block2 - "" for 2nd "" (set to 1 if not using 2nd level)
-    // lapt1 - load/adds per thread for first red. lev.
-    // lapt2 - "" for 2nd ""
-
-    int block1 = params[0];
-    int block2 = params[2];
-    int lapt1 = params[1];
-    int lapt2 = params[3];
-
-    static int r1size = 0;
-    static float *r1 = NULL;
-    static float *result_d = NULL;
-    if(action == cleanup) {
-        if(r1 != NULL) {
-            cudaFree(r1);
-            r1 = NULL;
-        }
-        if(result_d != NULL) {
-            cudaFree(result_d);
-            result_d = NULL;
-        }
-        r1size = 0;
-        return 0;
-    }
-
-    if(a.dim[0] != b.dim[0] || a.dim[1] != b.dim[1]) {
-        fprintf(stderr, "matrix_div_d: dimension error\n");
-        exit(1);
-    }
-
-    const int N = a.dim[0] * a.dim[1]; // size of each reduction
-
-    dim3 dimBlock(block1);
-    dim3 dimGrid((N / (block1 * lapt1)) + (!(N % (block1 * lapt1)) ? 0 : 1));
-
-    dim3 dimBlock2(block2);
-    dim3 dimGrid2((dimGrid.x / (block2 * lapt2)) + (!(dimGrid.x % (block2 * lapt2)) ? 0 : 1));
-
-    // printf("1: %i %i %i %i\n",dimBlock.x,dimBlock.y, dimGrid.x, dimGrid.y);
-    // printf("2: %i %i %i %i\n",dimBlock2.x,dimBlock2.y, dimGrid2.x, dimGrid2.y);
-
-    // allocate memory for first level reduction
-    if(result_d == NULL) cudaMalloc((void **) &result_d, sizeof(float) * 1);
-    if(r1size < dimGrid.x) {
-        if(r1 != NULL) cudaFree(r1);
-        r1size = dimGrid.x;
-        cudaMalloc((void **) &r1, sizeof(float) * r1size);
-    }
-
-    if(block2 <= 1) { // if we only need one level of reduction
-        if(dimGrid.x > 1) {
-            fprintf(stderr, "matrix_difference_norm_d: dimGrid.x > 1\n");
-            exit(1);
-        }
-        switch(block1) {
-            case 512:
-                reduce1DDiv<512><<<dimGrid, dimBlock, dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, result_d, N);
-                break;
-            case 256:
-                reduce1DDiv<256><<<dimGrid, dimBlock, dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, result_d, N);
-                break;
-            case 128:
-                reduce1DDiv<128><<<dimGrid, dimBlock, dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, result_d, N);
-                break;
-            case 64:
-                reduce1DDiv<64><<<dimGrid, dimBlock, dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, result_d, N);
-                break;
-            case 32:
-                reduce1DDiv<32><<<dimGrid, dimBlock, dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, result_d, N);
-                break;
-            case 16:
-                reduce1DDiv<16><<<dimGrid, dimBlock, dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, result_d, N);
-                break;
-            case 8:
-                reduce1DDiv<8><<<dimGrid, dimBlock, dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, result_d, N);
-                break;
-        }
-    } else { // if we need two levels of reduction
-        if(dimGrid2.x > 1) {
-            fprintf(stderr, "matrix_difference_norm_d: dimGrid2.x > 1\n");
-            exit(1);
-        }
-        switch(block1) {
-            case 512:
-                reduce1DDiv<512><<<dimGrid, dimBlock, dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, r1, N);
-                break;
-            case 256:
-                reduce1DDiv<256><<<dimGrid, dimBlock, dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, r1, N);
-                break;
-            case 128:
-                reduce1DDiv<128><<<dimGrid, dimBlock, dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, r1, N);
-                break;
-            case 64:
-                reduce1DDiv<64><<<dimGrid, dimBlock, dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, r1, N);
-                break;
-            case 32:
-                reduce1DDiv<32><<<dimGrid, dimBlock, dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, r1, N);
-                break;
-            case 16:
-                reduce1DDiv<16><<<dimGrid, dimBlock, dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, r1, N);
-                break;
-            case 8:
-                reduce1DDiv<8><<<dimGrid, dimBlock, dimBlock.x * sizeof(float)>>>(a.mat_d, b.mat_d, r1, N);
-                break;
-        }
-        switch(block2) {
-            case 512:
-                reduce2D<512><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float)>>>(r1, result_d, dimGrid.x);
-                break;
-            case 256:
-                reduce2D<256><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float)>>>(r1, result_d, dimGrid.x);
-                break;
-            case 128:
-                reduce2D<128><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float)>>>(r1, result_d, dimGrid.x);
-                break;
-            case 64:
-                reduce2D<64><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float)>>>(r1, result_d, dimGrid.x);
-                break;
-            case 32:
-                reduce2D<32><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float)>>>(r1, result_d, dimGrid.x);
-                break;
-            case 16:
-                reduce2D<16><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float)>>>(r1, result_d, dimGrid.x);
-                break;
-            case 8:
-                reduce2D<8><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float)>>>(r1, result_d, dimGrid.x);
-                break;
-        }
-    }
-
-    float result;
-    cudaMemcpy(&result, result_d, 1 * sizeof(float), cudaMemcpyDeviceToHost);
-    return result;
+    cudaAssert(cublasGetError());
 }
 
 void element_divide_d(matrix a, matrix b, matrix c, int block_size) {
