@@ -1,30 +1,34 @@
-#include "matrix.h"
 #include <cuda_runtime_api.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/time.h>
-#include <time.h>
 
-#define ITER_CHECK 25 // status printed and convergence check every ITER_CHECK iterations
-#define MAX_ITER 200 // max number of iterations
+#include "matrix.cuh"
+
+#define ITER_CHECK 25     // status printed and convergence check every ITER_CHECK iterations
+#define MAX_ITER 200      // max number of iterations
 #define CONVERGE_THRESH 0 // set to zero to guarantee MAX_ITER iterations, 0.001 is a good value otherwise
 
-void update_div(matrix W, matrix H, matrix X, const float thresh, const int max_iter, double *t, int verbose);
+void update_div(
+    matrix W0, matrix H0, matrix X0, const float thresh, const int32_t max_iter, double *t, int32_t verbose,
+    cudaStream_t stream
+);
 uint32_t nextpow2(uint32_t x);
 
 
 int32_t main(int32_t argc, char *argv[]) {
-    matrix W = read_matrix("../W.bin");
-    matrix X = read_matrix("../X.bin");
-    matrix H = read_matrix("../H.bin");
+    cudaStream_t stream = NULL;
+
+    matrix W = read_matrix("../W.bin", stream);
+    matrix X = read_matrix("../X.bin", stream);
+    matrix H = read_matrix("../H.bin", stream);
 
     // make sure no zero elements
-    matrix_eps(X);
-    matrix_eps(H);
-    matrix_eps(W);
+    matrix_eps_d(X, 128, stream);
+    matrix_eps_d(H, 128, stream);
+    matrix_eps_d(W, 128, stream);
 
     // iterative nmf minimization
-    update_div(W, H, X, CONVERGE_THRESH, MAX_ITER, NULL, 1);
+    update_div(W, H, X, CONVERGE_THRESH, MAX_ITER, NULL, 1, stream);
 
     // write results matrices to binary files
     // (can be read with export_bin.m in Matlab)
@@ -39,7 +43,10 @@ int32_t main(int32_t argc, char *argv[]) {
 }
 
 
-void update_div(matrix W0, matrix H0, matrix X0, const float thresh, const int32_t max_iter, double *t, int32_t verbose) {
+void update_div(
+    matrix W0, matrix H0, matrix X0, const float thresh, const int32_t max_iter, double *t, int32_t verbose,
+    cudaStream_t stream
+) {
     // run iterative multiplicative updates on W,H
 
     cublasInit();
@@ -99,9 +106,9 @@ void update_div(matrix W0, matrix H0, matrix X0, const float thresh, const int32
     const int32_t BLOCK_SIZE = 128;
 
     // copy host matrices to device memory
-    copy_matrix_to_device(&W0);
-    copy_matrix_to_device(&H0);
-    copy_matrix_to_device(&X0);
+    // copy_matrix_to_device(&W0);
+    // copy_matrix_to_device(&H0);
+    // copy_matrix_to_device(&X0);
 
     // matrix to hold W*H
     matrix WH0;
@@ -189,14 +196,14 @@ void update_div(matrix W0, matrix H0, matrix X0, const float thresh, const int32
         matrix_multiply_d(W, H, Z);
 
         // WH = WH+EPS
-        matrix_eps_d(Z, BLOCK_SIZE);
+        matrix_eps_d(Z, BLOCK_SIZE, stream);
 
         // Z = X./WH
         element_divide_d(X, Z, Z, BLOCK_SIZE);
 
         // sum cols of W into row vector
         sum_cols_d(compute, W, sumW, M_params);
-        matrix_eps_d(sumW, 32);
+        matrix_eps_d(sumW, 32, stream);
 
         // convert sumW to col vector (transpose)
         sumW.dim[0] = sumW.dim[1];
@@ -220,14 +227,14 @@ void update_div(matrix W0, matrix H0, matrix X0, const float thresh, const int32
         matrix_multiply_d(W, H, Z);
 
         // WH = WH+EPS
-        matrix_eps_d(Z, BLOCK_SIZE);
+        matrix_eps_d(Z, BLOCK_SIZE, stream);
 
         // Z = X./WH
         element_divide_d(X, Z, Z, BLOCK_SIZE);
 
         // sum rows of H into col vector
         sum_rows_d(compute, H, sumH2, N_params);
-        matrix_eps_d(sumH2, 32);
+        matrix_eps_d(sumH2, 32, stream);
 
         // convert sumH2 to row vector (transpose)
         sumH2.dim[1] = sumH2.dim[0];
@@ -271,7 +278,8 @@ void update_div(matrix W0, matrix H0, matrix X0, const float thresh, const int32
     destroy_matrix(&sumW);
     destroy_matrix(&sumH2);
 
-    copy_matrix_to_device(&X0);
+    copy_matrix_to_device(&X0, stream);
+
     create_matrix_on_device(&WH0, M, N, 0.0);
 
     // copy device results to host memory
@@ -281,8 +289,8 @@ void update_div(matrix W0, matrix H0, matrix X0, const float thresh, const int32
     // evaluate final results
     matrix_multiply_d(W0, H0, WH0);
 
-    diff = matrix_difference_norm_d(compute, X0, WH0, MN_params);
-    div = matrix_div_d(compute, X0, WH0, MN_params);
+    // diff = matrix_difference_norm_d(compute, X0, WH0, MN_params);
+    // div = matrix_div_d(compute, X0, WH0, MN_params);
 
     // clean up extra reduction memory
     matrix_difference_norm_d(cleanup, X0, WH0, MN_params);

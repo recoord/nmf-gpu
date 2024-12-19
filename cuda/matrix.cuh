@@ -13,12 +13,12 @@ typedef struct {
 typedef enum { compute, cleanup } action_t;
 
 // creating, allocating, moving matrices
-matrix read_matrix(std::string file);
+matrix read_matrix(std::string file, cudaStream_t stream);
 void write_matrix(matrix A, std::string file);
 void create_matrix(matrix *A, int rows, int cols, float value);
 void create_matrix_on_device(matrix *A, int rows, int cols, float value);
 void create_matrix_on_both(matrix *A, int rows, int cols, float value);
-void copy_matrix_to_device(matrix *A);
+void copy_matrix_to_device(matrix *A, cudaStream_t stream);
 void copy_matrix_on_device(matrix A, matrix B);
 void copy_matrix_from_device(matrix *A);
 void copy_to_padded(matrix A, matrix Apad);
@@ -45,8 +45,7 @@ void matrix_multiply_ABt_d(matrix a, matrix b, matrix c);
 // element operations
 void element_multiply_d(matrix a, matrix b, matrix c, int block_size);
 void element_divide_d(matrix a, matrix b, matrix c, int block_size);
-void matrix_eps_d(matrix a, int block_size);
-void matrix_eps(matrix a);
+void matrix_eps_d(matrix a, int block_size, cudaStream_t stream);
 
 // row/col-wise
 void row_divide_d(matrix a, matrix b, matrix c);

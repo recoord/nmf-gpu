@@ -1,9 +1,9 @@
 #include <cuda_runtime_api.h>
 #include <stdio.h>
 #include <stdlib.h>
-// #include <assert.h>
 
-#include "matrix.h"
+#include "matrix.cuh"
+#include "error-check.hpp"
 
 #define EPS 2.2204E-16
 #define MAX_BLOCKS 65535
@@ -24,7 +24,7 @@ template <unsigned int blockSize> __global__ void reduce1DEql(float *g_idata1, f
 void grid2D(dim3 *dimGrid);
 
 
-matrix read_matrix(std::string file) {
+matrix read_matrix(std::string file, cudaStream_t stream) {
     // read matrix in from file, store in column-major order
 
     matrix A;
@@ -43,7 +43,8 @@ matrix read_matrix(std::string file) {
     fclose(fp);
 
     A.mat_d = NULL;
-    // copy_matrix_to_device(A);
+
+    copy_matrix_to_device(&A, stream);
 
     printf("read %s [%ix%i]\n", file.c_str(), A.dim[0], A.dim[1]);
 
@@ -276,38 +277,14 @@ void free_matrix_on_device(matrix *A) {
     A->mat_d = NULL;
 }
 
-void copy_matrix_to_device(matrix *A) {
+void copy_matrix_to_device(matrix *A, cudaStream_t stream) {
+    uint32_t size = A->dim[0] * A->dim[1] * sizeof(float);
 
-    const int N = A->dim[0] * A->dim[1];
-    cudaError_t err;
-
-    if(A->mat == NULL) {
-        fprintf(stderr, "copy_matrix_to_device: matrix not allocated on host\n");
-        exit(1);
-    }
     if(A->mat_d == NULL) {
-        err = cudaMalloc((void **) &(A->mat_d), sizeof(float) * N);
-        if(err != cudaSuccess) {
-            fprintf(stderr, "copy_matrix_to_device: cudaMalloc: FAIL\n");
-            exit(1);
-        }
+        cudaAssert(cudaMalloc((void **) &(A->mat_d), size));
     }
 
-    err = cudaMemcpy(A->mat_d, A->mat, sizeof(float) * N, cudaMemcpyHostToDevice);
-    switch(err) {
-        case cudaErrorInvalidValue:
-            fprintf(stderr, "copy_matrix_to_device: cudaMemcpy: InvalidValue\n");
-            exit(1);
-            break;
-        case cudaErrorInvalidDevicePointer:
-            fprintf(stderr, "copy_matrix_to_device: cudaMemcpy: InvalidDevicePointer\n");
-            exit(1);
-            break;
-        case cudaErrorInvalidMemcpyDirection:
-            fprintf(stderr, "copy_matrix_to_device: cudaMemcpy: InvalidMemcpyDirection\n");
-            exit(1);
-            break;
-    }
+    cudaAssert(cudaMemcpyAsync(A->mat_d, A->mat, size, cudaMemcpyHostToDevice, stream));
 }
 
 void allocate_matrix_on_device(matrix *A) {
@@ -781,7 +758,7 @@ __global__ void vecEps(float *a, const int N) {
     if(a[i] < EPS && i < N) a[i] = EPS;
 }
 
-void matrix_eps_d(matrix a, int block_size) {
+void matrix_eps_d(matrix a, int block_size, cudaStream_t stream) {
 
     const int N = a.dim[0] * a.dim[1];
 
@@ -790,7 +767,7 @@ void matrix_eps_d(matrix a, int block_size) {
 
     if(dimGrid.x > MAX_BLOCKS) grid2D(&dimGrid);
 
-    vecEps<<<dimGrid, dimBlock>>>(a.mat_d, N);
+    vecEps<<<dimGrid, dimBlock, 0, stream>>>(a.mat_d, N);
 }
 
 void row_divide_d(matrix a, matrix b, matrix c) {
@@ -1763,14 +1740,6 @@ float zero_check(matrix a) {
     const int N = a.dim[0] * a.dim[1];
     for(i = 0; i < N; i++) s += (float) (a.mat[i] == 0);
     return s;
-}
-
-void matrix_eps(matrix a) {
-    int i;
-    const int N = a.dim[0] * a.dim[1];
-    for(i = 0; i < N; i++) {
-        if(a.mat[i] < EPS) a.mat[i] = EPS;
-    }
 }
 
 void grid2D(dim3 *dimGrid) {
