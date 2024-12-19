@@ -16,3 +16,6 @@ if [ "$h_out_md5" != "$h_test_md5" ]; then
     echo "Hout.bin and Htest.bin are different"
     exit 1
 fi
+
+echo
+echo "Result is identical to the test data"

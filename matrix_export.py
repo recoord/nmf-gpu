@@ -2,9 +2,9 @@ import numpy as np
 import struct
 
 np.random.seed(0)
-X = np.random.rand(4096, 3500).astype(np.float32)
+X = np.random.rand(4096, 350).astype(np.float32)
 W = np.random.rand(4096, 128).astype(np.float32)
-H = np.random.rand(128, 3500).astype(np.float32)
+H = np.random.rand(128, 350).astype(np.float32)
 
 def write_matrix_to_file(matrix, filename):
     with open(filename, "wb") as f:
