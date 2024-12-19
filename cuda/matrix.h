@@ -13,7 +13,7 @@ typedef struct {
 typedef enum { compute, cleanup } action_t;
 
 // creating, allocating, moving matrices
-void read_matrix(matrix *A, std::string file);
+matrix read_matrix(std::string file);
 void write_matrix(matrix A, std::string file);
 void create_matrix(matrix *A, int rows, int cols, float value);
 void create_matrix_on_device(matrix *A, int rows, int cols, float value);

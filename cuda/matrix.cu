@@ -24,28 +24,30 @@ template <unsigned int blockSize> __global__ void reduce1DEql(float *g_idata1, f
 void grid2D(dim3 *dimGrid);
 
 
-void read_matrix(matrix *A, std::string file) {
+matrix read_matrix(std::string file) {
     // read matrix in from file, store in column-major order
-    // A* must point to an uninitialized matrix
 
+    matrix A;
     FILE *fp;
     size_t count;
 
     fp = fopen(file.c_str(), "rb");
-    count = fread(A->dim, sizeof(int), 2, fp);
+    count = fread(A.dim, sizeof(int), 2, fp);
     if(count < 2) fprintf(stderr, "read_matrix: fread error\n");
 
-    int N = A->dim[0] * A->dim[1];
-    // cudaMallocHost((void**)&(A->mat),sizeof(float)*N); //page-locked memory (faster but limited)
-    A->mat = (float *) malloc(sizeof(float) * N);
-    count = fread(A->mat, sizeof(float), N, fp);
+    int N = A.dim[0] * A.dim[1];
+    // cudaMallocHost((void**)&(A.mat),sizeof(float)*N); //page-locked memory (faster but limited)
+    A.mat = (float *) malloc(sizeof(float) * N);
+    count = fread(A.mat, sizeof(float), N, fp);
     if(count < N) fprintf(stderr, "read_matrix: fread error\n");
     fclose(fp);
 
-    A->mat_d = NULL;
+    A.mat_d = NULL;
     // copy_matrix_to_device(A);
 
-    printf("read %s [%ix%i]\n", file.c_str(), A->dim[0], A->dim[1]);
+    printf("read %s [%ix%i]\n", file.c_str(), A.dim[0], A.dim[1]);
+
+    return A;
 }
 
 void write_matrix(matrix A, std::string file) {

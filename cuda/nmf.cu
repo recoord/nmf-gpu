@@ -5,37 +5,18 @@
 #include <sys/time.h>
 #include <time.h>
 
-// status printed and convergence check every ITER_CHECK iterations
-#define ITER_CHECK 25
-// max number of iterations
-#define MAX_ITER 200
-// set to zero to guarantee MAX_ITER iterations, 0.001 is a good value otherwise
-#define CONVERGE_THRESH 0
-
-// number of timers used in profiling (don't change)
-// #define TIMERS 10
-// char *tname[] = {"total", "sgemm", "eps", "vecdiv", "vecmult", "sumrows", "sumcols", "coldiv", "rowdiv", "check"};
-
+#define ITER_CHECK 25 // status printed and convergence check every ITER_CHECK iterations
+#define MAX_ITER 200 // max number of iterations
+#define CONVERGE_THRESH 0 // set to zero to guarantee MAX_ITER iterations, 0.001 is a good value otherwise
 
 void update_div(matrix W, matrix H, matrix X, const float thresh, const int max_iter, double *t, int verbose);
-// double get_time();
-unsigned nextpow2(unsigned x);
+uint32_t nextpow2(uint32_t x);
 
 
 int32_t main(int32_t argc, char *argv[]) {
-
-
-    // factor X into W*H
-    matrix W, H, X;
-
-
-    // read in matrix data:
-    // X - matrix to factorize
-    // W - initial W matrix
-    // H - initial H matrix
-    read_matrix(&W, "../W.bin");
-    read_matrix(&X, "../X.bin");
-    read_matrix(&H, "../H.bin");
+    matrix W = read_matrix("../W.bin");
+    matrix X = read_matrix("../X.bin");
+    matrix H = read_matrix("../H.bin");
 
     // make sure no zero elements
     matrix_eps(X);
@@ -320,7 +301,7 @@ void update_div(matrix W0, matrix H0, matrix X0, const float thresh, const int32
     cublasShutdown();
 }
 
-unsigned nextpow2(unsigned x) {
+uint32_t nextpow2(uint32_t x) {
     x = x - 1;
     x = x | (x >> 1);
     x = x | (x >> 2);
