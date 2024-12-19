@@ -105,24 +105,6 @@ void update_div(
     // block size in vector arithmetic operations
     const int32_t BLOCK_SIZE = 128;
 
-    // copy host matrices to device memory
-    // copy_matrix_to_device(&W0);
-    // copy_matrix_to_device(&H0);
-    // copy_matrix_to_device(&X0);
-
-    // matrix to hold W*H
-    matrix WH0;
-    create_matrix_on_device(&WH0, M, N, 0.0f);
-
-    // compute initial divergence and error
-    // float diff, div, change, prev_diff, prev_div;
-    matrix_multiply_d(W0, H0, WH0);
-    float diff = matrix_difference_norm_d(compute, X0, WH0, MN_params);
-    float div = matrix_div_d(compute, X0, WH0, MN_params);
-
-    free_matrix_on_device(&WH0);
-
-
     // initialize temp matrices -----------------------
 
     // matrix to hold X./(W*H+EPS)
@@ -163,21 +145,6 @@ void update_div(
     copy_matrix_to_device_padded(X0, X);
 
     for(int32_t i = 0; i < max_iter; i++) {
-
-        // check for convergence, print status
-        if(i % ITER_CHECK == 0 && i != 0) {
-            matrix_multiply_d(W, H, Z);
-            float prev_diff = diff;
-            diff = matrix_difference_norm_d(compute, X, Z, MN_params);
-            float change = (prev_diff - diff) / prev_diff;
-
-            if(change < thresh) {
-                printf("converged\n");
-                break;
-            }
-        }
-
-
         /* matlab algorithm
            Z = X./(W*H+eps); H = H.*(W'*Z)./(repmat(sum(W)',1,F));
            Z = X./(W*H+eps);
@@ -276,26 +243,13 @@ void update_div(
 
     copy_matrix_to_device(&X0, stream);
 
-    create_matrix_on_device(&WH0, M, N, 0.0);
-
     // copy device results to host memory
     copy_matrix_from_device(&W0);
     copy_matrix_from_device(&H0);
 
-    // // evaluate final results
-    // matrix_multiply_d(W0, H0, WH0);
-
-    // diff = matrix_difference_norm_d(compute, X0, WH0, MN_params);
-    // div = matrix_div_d(compute, X0, WH0, MN_params);
-
     // clean up extra reduction memory
-    matrix_difference_norm_d(cleanup, X0, WH0, MN_params);
-    matrix_div_d(cleanup, X0, WH0, MN_params);
     sum_cols_d(cleanup, W, sumW, M_params);
     sum_rows_d(cleanup, H, sumH2, N_params);
-
-    // free temp matrices
-    destroy_matrix(&WH0);
 
     cublasShutdown();
 }
