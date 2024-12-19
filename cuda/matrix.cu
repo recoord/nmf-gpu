@@ -314,7 +314,6 @@ void copy_matrix_on_device(matrix A, matrix B) {
         exit(1);
     }
     const int N = A.dim[0] * A.dim[1];
-    cudaError_t err;
 
     if(A.mat_d == NULL) {
         fprintf(stderr, "copy_matrix_on_device: source matrix not allocated on device\n");
