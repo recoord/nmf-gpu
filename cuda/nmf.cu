@@ -9,7 +9,7 @@
 #define CONVERGE_THRESH 0 // set to zero to guarantee MAX_ITER iterations, 0.001 is a good value otherwise
 
 void update_div(
-    matrix W0, matrix H0, matrix X0, const float thresh, const int32_t max_iter, double *t, int32_t verbose,
+    matrix W0, matrix H0, matrix X0, const float thresh, const int32_t max_iter, int32_t verbose,
     cudaStream_t stream
 );
 uint32_t nextpow2(uint32_t x);
@@ -28,7 +28,7 @@ int32_t main(int32_t argc, char *argv[]) {
     matrix_eps_d(W, 128, stream);
 
     // iterative nmf minimization
-    update_div(W, H, X, CONVERGE_THRESH, MAX_ITER, NULL, 1, stream);
+    update_div(W, H, X, CONVERGE_THRESH, MAX_ITER, 1, stream);
 
     // write results matrices to binary files
     // (can be read with export_bin.m in Matlab)
@@ -44,7 +44,7 @@ int32_t main(int32_t argc, char *argv[]) {
 
 
 void update_div(
-    matrix W0, matrix H0, matrix X0, const float thresh, const int32_t max_iter, double *t, int32_t verbose,
+    matrix W0, matrix H0, matrix X0, const float thresh, const int32_t max_iter, int32_t verbose,
     cudaStream_t stream
 ) {
     // run iterative multiplicative updates on W,H
@@ -112,7 +112,7 @@ void update_div(
 
     // matrix to hold W*H
     matrix WH0;
-    create_matrix_on_device(&WH0, M, N, 0.0);
+    create_matrix_on_device(&WH0, M, N, 0.0f);
 
     // compute initial divergence and error
     // float diff, div, change, prev_diff, prev_div;
@@ -120,10 +120,6 @@ void update_div(
     float diff = matrix_difference_norm_d(compute, X0, WH0, MN_params);
     float div = matrix_div_d(compute, X0, WH0, MN_params);
 
-    // free device memory for unpadded matrices
-    free_matrix_on_device(&W0);
-    free_matrix_on_device(&H0);
-    free_matrix_on_device(&X0);
     free_matrix_on_device(&WH0);
 
 
@@ -258,9 +254,9 @@ void update_div(
         sumH2.dim[1] = 1;
     }
 
-    // reallocate unpadded device memory
-    allocate_matrix_on_device(&W0);
-    allocate_matrix_on_device(&H0);
+    // // reallocate unpadded device memory
+    // allocate_matrix_on_device(&W0);
+    // allocate_matrix_on_device(&H0);
 
     // copy padded matrix to unpadded matrices
     copy_from_padded(W0, W);
@@ -286,8 +282,8 @@ void update_div(
     copy_matrix_from_device(&W0);
     copy_matrix_from_device(&H0);
 
-    // evaluate final results
-    matrix_multiply_d(W0, H0, WH0);
+    // // evaluate final results
+    // matrix_multiply_d(W0, H0, WH0);
 
     // diff = matrix_difference_norm_d(compute, X0, WH0, MN_params);
     // div = matrix_div_d(compute, X0, WH0, MN_params);
@@ -297,11 +293,6 @@ void update_div(
     matrix_div_d(cleanup, X0, WH0, MN_params);
     sum_cols_d(cleanup, W, sumW, M_params);
     sum_rows_d(cleanup, H, sumH2, N_params);
-
-    // free device memory for unpadded matrices
-    free_matrix_on_device(&W0);
-    free_matrix_on_device(&H0);
-    free_matrix_on_device(&X0);
 
     // free temp matrices
     destroy_matrix(&WH0);
