@@ -1,6 +1,7 @@
 
 #include <cublas.h>
 #include <math.h>
+#include <string>
 
 
 typedef struct {
@@ -12,8 +13,8 @@ typedef struct {
 typedef enum { compute, cleanup } action_t;
 
 // creating, allocating, moving matrices
-void read_matrix(matrix *A, char *file);
-void write_matrix(matrix A, char *file);
+void read_matrix(matrix *A, std::string file);
+void write_matrix(matrix A, std::string file);
 void create_matrix(matrix *A, int rows, int cols, float value);
 void create_matrix_on_device(matrix *A, int rows, int cols, float value);
 void create_matrix_on_both(matrix *A, int rows, int cols, float value);

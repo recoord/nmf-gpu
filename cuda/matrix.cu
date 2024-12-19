@@ -24,14 +24,14 @@ template <unsigned int blockSize> __global__ void reduce1DEql(float *g_idata1, f
 void grid2D(dim3 *dimGrid);
 
 
-void read_matrix(matrix *A, char *file) {
+void read_matrix(matrix *A, std::string file) {
     // read matrix in from file, store in column-major order
     // A* must point to an uninitialized matrix
 
     FILE *fp;
     size_t count;
 
-    fp = fopen(file, "rb");
+    fp = fopen(file.c_str(), "rb");
     count = fread(A->dim, sizeof(int), 2, fp);
     if(count < 2) fprintf(stderr, "read_matrix: fread error\n");
 
@@ -45,17 +45,17 @@ void read_matrix(matrix *A, char *file) {
     A->mat_d = NULL;
     // copy_matrix_to_device(A);
 
-    printf("read %s [%ix%i]\n", file, A->dim[0], A->dim[1]);
+    printf("read %s [%ix%i]\n", file.c_str(), A->dim[0], A->dim[1]);
 }
 
-void write_matrix(matrix A, char *file) {
+void write_matrix(matrix A, std::string file) {
     // write matrix to file using column-major order
     // dimensions are written as leading ints
 
     FILE *fp;
     size_t count;
 
-    fp = fopen(file, "wb");
+    fp = fopen(file.c_str(), "wb");
     count = fwrite(A.dim, sizeof(int), 2, fp);
     if(count < 2) fprintf(stderr, "write_matrix: fwrite error\n");
 
@@ -64,7 +64,7 @@ void write_matrix(matrix A, char *file) {
     if(count < A.dim[0] * A.dim[1]) fprintf(stderr, "write_matrix: fwrite error\n");
     fclose(fp);
 
-    printf("write %s [%ix%i]\n", file, A.dim[0], A.dim[1]);
+    printf("write %s [%ix%i]\n", file.c_str(), A.dim[0], A.dim[1]);
 }
 
 void create_matrix(matrix *A, int rows, int cols, float value) {
