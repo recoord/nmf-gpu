@@ -23,8 +23,6 @@ typedef enum { compute, cleanup } action_t;
 
 // creating, allocating, moving matrices
 void copy_matrix_on_device(Matrix A, Matrix B);
-void copy_to_padded(Matrix A, Matrix Apad);
-void copy_matrix_to_device_padded(Matrix A, Matrix Apad);
 void copy_from_padded(Matrix A, Matrix Apad);
 
 // Matrix analysis

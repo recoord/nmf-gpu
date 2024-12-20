@@ -64,64 +64,6 @@ void Matrix::clone_to_padded(Matrix* padded) {
     ));
 }
 
-void copy_to_padded(Matrix A, Matrix Apad) {
-    // copy unpadded Matrix on device to padded Matrix on device
-
-    const uint32_t M = A.rows;
-    const uint32_t N = A.cols;
-    const uint32_t M_padded = Apad.rows;
-    const uint32_t N_padded = Apad.cols;
-
-    if(M > M_padded) {
-        fprintf(stderr, "copy_to_padded: padded number of rows must be >= original\n");
-        exit(1);
-    }
-    if(N > N_padded) {
-        fprintf(stderr, "copy_to_padded: padded number of cols must be >= original\n");
-        exit(1);
-    }
-
-    cudaError_t err;
-    err = cudaMemcpy2D(
-        Apad.data, sizeof(float) * M_padded, A.data, sizeof(float) * M, sizeof(float) * M, N, cudaMemcpyDeviceToDevice
-    );
-    if(err != cudaSuccess) {
-        fprintf(stderr, "copy_to_padded: error in cudaMemcpy2D [%i],%i\n", err, cudaErrorInvalidValue);
-        exit(1);
-    }
-    // cudaMemcpy2D( void* dst, size_t dpitch, const void* src, size_t spitch, size_t width, size_t height, enum
-    // cudaMemcpyKind kind )
-}
-
-void copy_matrix_to_device_padded(Matrix A, Matrix Apad) {
-    // copy unpadded Matrix on host to padded Matrix on device
-
-    const uint32_t M = A.rows;
-    const uint32_t N = A.cols;
-    const uint32_t M_padded = Apad.rows;
-    const uint32_t N_padded = Apad.cols;
-
-    if(M > M_padded) {
-        fprintf(stderr, "copy_to_padded: padded number of rows must be >= original\n");
-        exit(1);
-    }
-    if(N > N_padded) {
-        fprintf(stderr, "copy_to_padded: padded number of cols must be >= original\n");
-        exit(1);
-    }
-
-    cudaError_t err;
-    err = cudaMemcpy2D(
-        Apad.data, sizeof(float) * M_padded, A.data, sizeof(float) * M, sizeof(float) * M, N, cudaMemcpyDeviceToDevice
-    );
-    if(err != cudaSuccess) {
-        fprintf(stderr, "copy_to_padded: error in cudaMemcpy2D [%i],%i\n", err, cudaErrorInvalidValue);
-        exit(1);
-    }
-    // cudaMemcpy2D( void* dst, size_t dpitch, const void* src, size_t spitch, size_t width, size_t height, enum
-    // cudaMemcpyKind kind )
-}
-
 void copy_from_padded(Matrix A, Matrix Apad) {
     // copy padded Matrix on device to unpadded Matrix on device
 
