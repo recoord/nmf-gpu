@@ -9,7 +9,7 @@
 #define CONVERGE_THRESH 0 // set to zero to guarantee MAX_ITER iterations, 0.001 is a good value otherwise
 
 void update_div(
-    matrix W0, matrix H0, matrix X0, const float thresh, const int32_t max_iter, int32_t verbose, cudaStream_t stream
+    Matrix W0, Matrix H0, Matrix X0, const float thresh, const int32_t max_iter, int32_t verbose, cudaStream_t stream
 );
 uint32_t nextpow2(uint32_t x);
 
@@ -17,9 +17,9 @@ uint32_t nextpow2(uint32_t x);
 int32_t main(int32_t argc, char *argv[]) {
     cudaStream_t stream = NULL;
 
-    matrix W = read_matrix("../W.bin", stream);
-    matrix X = read_matrix("../X.bin", stream);
-    matrix H = read_matrix("../H.bin", stream);
+    Matrix W = read_matrix("../W.bin", stream);
+    Matrix X = read_matrix("../X.bin", stream);
+    Matrix H = read_matrix("../H.bin", stream);
 
     // make sure no zero elements
     matrix_eps_d(X, 128, stream);
@@ -43,17 +43,17 @@ int32_t main(int32_t argc, char *argv[]) {
 
 
 void update_div(
-    matrix W0, matrix H0, matrix X0, const float thresh, const int32_t max_iter, int32_t verbose, cudaStream_t stream
+    Matrix W0, Matrix H0, Matrix X0, const float thresh, const int32_t max_iter, int32_t verbose, cudaStream_t stream
 ) {
     // run iterative multiplicative updates on W,H
 
     cublasInit();
 
-    const int32_t M = W0.dim[0];
-    const int32_t K = W0.dim[1];
-    const int32_t N = H0.dim[1];
+    const int32_t M = W0.rows;
+    const int32_t K = W0.cols;
+    const int32_t N = H0.cols;
 
-    // pad matrix dimensions to multiples of:
+    // pad Matrix dimensions to multiples of:
     const int32_t PAD_MULT = 32;
 
     int32_t M_padded = M;
@@ -99,35 +99,35 @@ void update_div(
 
     // initialize temp matrices -----------------------
 
-    // matrix to hold X./(W*H+EPS)
-    matrix Z;
+    // Matrix to hold X./(W*H+EPS)
+    Matrix Z(M_padded, N_padded);
     create_matrix_on_device(&Z, M_padded, N_padded, 0.0);
 
-    // matrix to hold W'*Z
-    matrix WtZ;
+    // Matrix to hold W'*Z
+    Matrix WtZ(K_padded, N_padded);
     create_matrix_on_device(&WtZ, K_padded, N_padded, 0.0);
 
-    // matrix to hold Z*H'
-    matrix ZHt;
+    // Matrix to hold Z*H'
+    Matrix ZHt(M_padded, K_padded);
     create_matrix_on_device(&ZHt, M_padded, K_padded, 0.0);
 
-    // matrix to hold sum(W) [sum of cols of W]
-    matrix sumW;
+    // Matrix to hold sum(W) [sum of cols of W]
+    Matrix sumW(1, K_padded);
     create_matrix_on_device(&sumW, 1, K_padded, 0.0);
 
-    // matrix to hold sum(H,2) [sum of rows of H]
-    matrix sumH2;
+    // Matrix to hold sum(H,2) [sum of rows of H]
+    Matrix sumH2(K_padded, 1);
     create_matrix_on_device(&sumH2, K_padded, 1, 0.0);
 
 
     // matrices to hold padded versions of matrices
-    matrix W;
+    Matrix W(M_padded, K_padded);
     create_matrix_on_device(&W, M_padded, K_padded, 0.0);
 
-    matrix H;
+    Matrix H(K_padded, N_padded);
     create_matrix_on_device(&H, K_padded, N_padded, 0.0);
 
-    matrix X;
+    Matrix X(M_padded, N_padded);
     create_matrix_on_device(&X, M_padded, N_padded, 0.0);
 
 
@@ -161,13 +161,13 @@ void update_div(
         matrix_eps_d(sumW, 32, stream);
 
         // convert sumW to col vector (transpose)
-        sumW.dim[0] = sumW.dim[1];
-        sumW.dim[1] = 1;
+        sumW.rows = sumW.cols;
+        sumW.cols = 1;
 
         // WtZ = W'*Z
         matrix_multiply_AtB_d(W, Z, WtZ);
 
-        // WtZ = WtZ./(repmat(sum(W)',1,H.dim[1])
+        // WtZ = WtZ./(repmat(sum(W)',1,H.cols)
         //[element divide cols of WtZ by sumW']
         col_divide_d(WtZ, sumW, WtZ);
 
@@ -192,13 +192,13 @@ void update_div(
         matrix_eps_d(sumH2, 32, stream);
 
         // convert sumH2 to row vector (transpose)
-        sumH2.dim[1] = sumH2.dim[0];
-        sumH2.dim[0] = 1;
+        sumH2.cols = sumH2.rows;
+        sumH2.rows = 1;
 
         // ZHt = Z*H'
         matrix_multiply_ABt_d(Z, H, ZHt);
 
-        // ZHt = ZHt./(repmat(sum(H,2)',W.dim[0],1)
+        // ZHt = ZHt./(repmat(sum(H,2)',W.rows,1)
         //[element divide rows of ZHt by sumH2']
         row_divide_d(ZHt, sumH2, ZHt);
 
@@ -206,14 +206,14 @@ void update_div(
         element_multiply_d(W, ZHt, W, BLOCK_SIZE);
 
         // reset sumW to row vector
-        sumW.dim[1] = sumW.dim[0];
-        sumW.dim[0] = 1;
+        sumW.cols = sumW.rows;
+        sumW.rows = 1;
         // reset sumH2 to col vector
-        sumH2.dim[0] = sumH2.dim[1];
-        sumH2.dim[1] = 1;
+        sumH2.rows = sumH2.cols;
+        sumH2.cols = 1;
     }
 
-    // copy padded matrix to unpadded matrices
+    // copy padded Matrix to unpadded matrices
     copy_from_padded(W0, W);
     copy_from_padded(H0, H);
 
