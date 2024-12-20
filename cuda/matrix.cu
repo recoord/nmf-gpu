@@ -27,7 +27,16 @@ void grid2D(dim3 *dimGrid);
 Matrix::Matrix(uint32_t rows, uint32_t cols) {
     this->rows = rows;
     this->cols = cols;
-    this->data = nullptr;
+
+    cudaAssert(cudaMalloc((void **) &(this->data), rows * cols * sizeof(float)));
+}
+
+Matrix::Matrix(float *host_data, uint32_t rows, uint32_t cols) {
+    this->rows = rows;
+    this->cols = cols;
+    uint32_t size = rows * cols * sizeof(float);
+    cudaAssert(cudaMalloc((void **) &(this->data), size));
+    cudaAssert(cudaMemcpy(this->data, host_data, size, cudaMemcpyHostToDevice));
 }
 
 Matrix::Matrix(float value, uint32_t rows, uint32_t cols) {
@@ -38,7 +47,11 @@ Matrix::Matrix(float value, uint32_t rows, uint32_t cols) {
     cudaAssert(cudaMemset(this->data, value, size));
 }
 
-Matrix::~Matrix() {}
+Matrix::~Matrix() {
+    // if(this->data != nullptr) {
+    //     cudaFree(this->data);
+    // }
+}
 
 
 Matrix read_matrix(std::string file, cudaStream_t stream) {
@@ -55,17 +68,13 @@ Matrix read_matrix(std::string file, cudaStream_t stream) {
     count = fread(&cols, sizeof(uint32_t), 1, fp);
     if(count < 1) fprintf(stderr, "read_matrix: fread error\n");
 
-    Matrix A(rows, cols);
-
-    size_t N = A.rows * A.cols;
-    float *temp = (float *) malloc(sizeof(float) * N);
-    count = fread(temp, sizeof(float), N, fp);
-    if(count < N) fprintf(stderr, "read_matrix: fread error\n");
+    size_t size = rows * cols;
+    float *temp = (float *) malloc(sizeof(float) * size);
+    count = fread(temp, sizeof(float), size, fp);
+    if(count < size) fprintf(stderr, "read_matrix: fread error\n");
     fclose(fp);
 
-    // copy_matrix_to_device(&A, stream);
-    cudaAssert(cudaMalloc((void **) &(A.data), N * sizeof(float)));
-    cudaAssert(cudaMemcpyAsync(A.data, temp, N * sizeof(float), cudaMemcpyHostToDevice, stream));
+    Matrix A(temp, rows, cols);
 
     free(temp);
 
@@ -100,58 +109,6 @@ void write_matrix(Matrix A, std::string file) {
 
     printf("write %s [%ix%i]\n", file.c_str(), A.rows, A.cols);
 }
-
-// void create_matrix_on_device(Matrix *A, int32_t rows, int32_t cols, float value) {
-//     // create Matrix on device  with all elements equal to 'value'
-//     // Matrix dimensions are in dim[] {rows,cols}
-
-//     A->rows = rows;
-//     A->cols = cols;
-//     // A->mat = NULL;
-
-//     const int32_t N = A->rows * A->cols;
-
-//     cudaError_t err;
-//     err = cudaMalloc((void **) &(A->data), sizeof(float) * N);
-//     // printf("device pointer: %p\n",A->data);
-//     if(err != cudaSuccess) {
-//         fprintf(stderr, "create_matrix_on_device: cudaMalloc: ErrorMemoryAllocation\n");
-//         exit(1);
-//     }
-
-//     float *temp = (float *) malloc(sizeof(float) * N);
-//     for(int32_t i = 0; i < N; i++) temp[i] = value;
-//     cudaMemcpy(A->data, temp, sizeof(float) * N, cudaMemcpyHostToDevice);
-
-//     free(temp);
-// }
-
-/*
-void copy_to_padded_with_cols(Matrix A, Matrix Apad){
-    //create Matrix on device  with all elements equal to 'value'
-    //Matrix dimensions are in dim[] {rows,cols}
-
-    const int32_t M = A.rows;
-    const int32_t N = A.cols;
-    const int32_t M_padded = Apad.rows;
-    const int32_t N_padded = Apad.cols;
-
-    if (M != M_padded){
-    fprintf(stderr,"copy_to_padded_with_cols: number of rows must stay the same\n");
-    exit(1);
-    }
-    if (N > N_padded){
-    fprintf(stderr,"copy_to_padded_with_cols: padded number of cols must be >= original\n");
-    exit(1);
-    }
-
-    cudaMemcpy(Apad.data,A.data,sizeof(float)*N*M,cudaMemcpyDeviceToDevice);
-
-
-
-
-}
-*/
 
 void copy_to_padded(Matrix A, Matrix Apad) {
     // copy unpadded Matrix on device to padded Matrix on device
@@ -231,36 +188,6 @@ void copy_from_padded(Matrix A, Matrix Apad) {
     cudaMemcpy2D(
         A.data, sizeof(float) * M, Apad.data, sizeof(float) * M_padded, sizeof(float) * M, N, cudaMemcpyDeviceToDevice
     );
-}
-
-void destroy_matrix(Matrix *A) {
-    if(A->data != NULL) cudaFree(A->data);
-    A->data = NULL;
-
-    A->rows = 0;
-    A->cols = 0;
-}
-
-void free_matrix_on_device(Matrix *A) {
-    if(A->data != NULL) cudaFree(A->data);
-    A->data = NULL;
-}
-
-void allocate_matrix_on_device(Matrix *A) {
-
-    const int32_t N = A->rows * A->cols;
-    cudaError_t err;
-
-    if(A->data == NULL) {
-        err = cudaMalloc((void **) &(A->data), sizeof(float) * N);
-        if(err != cudaSuccess) {
-            fprintf(stderr, "allocate_matrix_on_device: cudaMalloc: FAIL\n");
-            exit(1);
-        }
-    } else {
-        fprintf(stderr, "allocate_matrix_on_device: Matrix already allocated on device");
-        exit(1);
-    }
 }
 
 void copy_matrix_on_device(Matrix A, Matrix B) {

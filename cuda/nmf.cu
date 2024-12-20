@@ -34,10 +34,6 @@ int32_t main(int32_t argc, char *argv[]) {
     write_matrix(W, "../Wout.bin");
     write_matrix(H, "../Hout.bin");
 
-    destroy_matrix(&W);
-    destroy_matrix(&H);
-    destroy_matrix(&X);
-
     return 0;
 }
 
@@ -204,18 +200,6 @@ void update_div(
     // copy padded Matrix to unpadded matrices
     copy_from_padded(W0, W);
     copy_from_padded(H0, H);
-
-    // free padded matrices
-    destroy_matrix(&W);
-    destroy_matrix(&H);
-    destroy_matrix(&X);
-
-    // free temp matrices
-    destroy_matrix(&Z);
-    destroy_matrix(&WtZ);
-    destroy_matrix(&ZHt);
-    destroy_matrix(&sumW);
-    destroy_matrix(&sumH2);
 
     // clean up extra reduction memory
     sum_cols_d(cleanup, W, sumW, M_params);
