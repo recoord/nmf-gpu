@@ -1,7 +1,7 @@
+#include <cassert>
 #include <cuda_runtime_api.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <cassert>
 
 #include "error-check.hpp"
 #include "matrix.cuh"
@@ -54,7 +54,7 @@ Matrix::~Matrix() {
     // }
 }
 
-void Matrix::clone_to_padded(Matrix* padded) {
+void Matrix::copy_to_padded(Matrix *padded) {
     assert(this->rows <= padded->rows);
     assert(this->cols <= padded->cols);
 
@@ -64,46 +64,14 @@ void Matrix::clone_to_padded(Matrix* padded) {
     ));
 }
 
-void copy_from_padded(Matrix A, Matrix Apad) {
-    // copy padded Matrix on device to unpadded Matrix on device
-
-    const uint32_t M = A.rows;
-    const uint32_t N = A.cols;
-    const uint32_t M_padded = Apad.rows;
-    const uint32_t N_padded = Apad.cols;
-
-    if(M > M_padded) {
-        fprintf(stderr, "copy_from_padded: padded number of rows must be >= original\n");
-        exit(1);
-    }
-    if(N > N_padded) {
-        fprintf(stderr, "copy_from_padded: padded number of cols must be >= original\n");
-        exit(1);
-    }
+void Matrix::copy_from_padded(Matrix *padded) {
+    assert(this->rows <= padded->rows);
+    assert(this->cols <= padded->cols);
 
     cudaMemcpy2D(
-        A.data, sizeof(float) * M, Apad.data, sizeof(float) * M_padded, sizeof(float) * M, N, cudaMemcpyDeviceToDevice
+        this->data, sizeof(float) * this->rows, padded->data, sizeof(float) * padded->rows, sizeof(float) * this->rows,
+        this->cols, cudaMemcpyDeviceToDevice
     );
-}
-
-void copy_matrix_on_device(Matrix A, Matrix B) {
-
-    if(A.rows != B.rows || A.cols != B.cols) {
-        fprintf(stderr, "copy_matrix_on_device: dimension error\n");
-        exit(1);
-    }
-    const uint32_t N = A.rows * A.cols;
-
-    if(A.data == NULL) {
-        fprintf(stderr, "copy_matrix_on_device: source Matrix not allocated on device\n");
-        exit(1);
-    }
-    if(B.data == NULL) {
-        fprintf(stderr, "copy_matrix_on_device: dest. Matrix not allocated on device\n");
-        exit(1);
-    }
-
-    cudaAssert(cudaMemcpy(B.data, A.data, sizeof(float) * N, cudaMemcpyDeviceToDevice));
 }
 
 void matrix_multiply_d(Matrix a, Matrix b, Matrix c) {

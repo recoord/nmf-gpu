@@ -109,9 +109,9 @@ void update_div(
     Matrix H(0.0f, K_padded, N_padded);
     Matrix X(0.0f, M_padded, N_padded);
 
-    W0.clone_to_padded(&W);
-    H0.clone_to_padded(&H);
-    X0.clone_to_padded(&X);
+    W0.copy_to_padded(&W);
+    H0.copy_to_padded(&H);
+    X0.copy_to_padded(&X);
 
     for(int32_t i = 0; i < max_iter; i++) {
         /* matlab algorithm
@@ -191,8 +191,8 @@ void update_div(
     }
 
     // copy padded Matrix to unpadded matrices
-    copy_from_padded(W0, W);
-    copy_from_padded(H0, H);
+    W0.copy_from_padded(&W);
+    H0.copy_from_padded(&H);
 
     // clean up extra reduction memory
     sum_cols_d(cleanup, W, sumW, M_params);

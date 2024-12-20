@@ -11,7 +11,8 @@ class Matrix {
     uint32_t rows;
     uint32_t cols;
 
-    void clone_to_padded(Matrix* padded);
+    void copy_to_padded(Matrix* padded);
+    void copy_from_padded(Matrix* padded);
 
     Matrix(uint32_t rows, uint32_t cols);
     Matrix(float *host_data, uint32_t rows, uint32_t cols);
@@ -22,7 +23,6 @@ class Matrix {
 typedef enum { compute, cleanup } action_t;
 
 // creating, allocating, moving matrices
-void copy_matrix_on_device(Matrix A, Matrix B);
 void copy_from_padded(Matrix A, Matrix Apad);
 
 // Matrix analysis
