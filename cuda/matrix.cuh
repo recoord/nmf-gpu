@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <string>
 
+#define PAD_MULT 32
+
 
 class Matrix {
     private:

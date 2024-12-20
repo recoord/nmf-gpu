@@ -8,8 +8,6 @@
 
 #define EPS (float) (2.2204E-16)
 #define MAX_BLOCKS 65535
-#define PAD_MULT 32
-
 
 __global__ void vecEps(float *a, const int32_t N);
 __global__ void vecDiv(float *a, float *b, float *c, const int32_t N);

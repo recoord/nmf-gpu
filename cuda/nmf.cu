@@ -40,6 +40,28 @@ int32_t main(int32_t argc, char *argv[]) {
     return 0;
 }
 
+void init_params(uint32_t value, uint32_t *params) {
+    uint32_t padded_value = value;
+    if(value % PAD_MULT != 0) {
+        padded_value = value + (PAD_MULT - (value % PAD_MULT));
+    }
+
+    uint32_t rem;
+    rem = nextpow2(padded_value / 128 + (!(padded_value % 128) ? 0 : 1));
+    if(rem <= 128) {
+        params[0] = 128;
+        params[1] = rem;
+    } else if(rem <= 512) {
+        params[0] = rem;
+        params[1] = 128;
+    } else {
+        fprintf(stderr, "reduction parameter error\n");
+        exit(1);
+    }
+
+    params[2] = 1;
+    params[3] = 1;
+}
 
 void update_div(
     Matrix W0, Matrix H0, Matrix X0, const float thresh, const int32_t max_iter, int32_t verbose, cudaStream_t stream
@@ -53,8 +75,6 @@ void update_div(
     const uint32_t N = H0.cols;
 
     // pad Matrix dimensions to multiples of:
-    const uint32_t PAD_MULT = 32;
-
     uint32_t M_padded = M;
     if(M % PAD_MULT != 0) M_padded = M + (PAD_MULT - (M % PAD_MULT));
 
@@ -65,33 +85,11 @@ void update_div(
     if(N % PAD_MULT != 0) N_padded = N + (PAD_MULT - (N % PAD_MULT));
 
     // find reduction parameters
-    uint32_t N_params[4] = {1, 1, 1, 1}; // N size reductions (rows)
-    uint32_t M_params[4] = {1, 1, 1, 1}; // M size reductions (cols)
+    uint32_t N_params[4]; // N size reductions (rows)
+    uint32_t M_params[4]; // M size reductions (cols)
 
-    uint32_t rem;
-    rem = nextpow2(N_padded / 128 + (!(N_padded % 128) ? 0 : 1));
-    if(rem <= 128) {
-        N_params[0] = 128;
-        N_params[1] = rem;
-    } else if(rem <= 512) {
-        N_params[0] = rem;
-        N_params[1] = 128;
-    } else {
-        fprintf(stderr, "reduction parameter error\n");
-        exit(1);
-    }
-
-    rem = nextpow2(M_padded / 128 + (!(M_padded % 128) ? 0 : 1));
-    if(rem <= 128) {
-        M_params[0] = 128;
-        M_params[1] = rem;
-    } else if(rem <= 512) {
-        M_params[0] = rem;
-        M_params[1] = 128;
-    } else {
-        fprintf(stderr, "reduction parameter error\n");
-        exit(1);
-    }
+    init_params(N, N_params);
+    init_params(M, M_params);
 
     // block size in vector arithmetic operations
     const int32_t BLOCK_SIZE = 128;
