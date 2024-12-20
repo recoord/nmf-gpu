@@ -1,0 +1,33 @@
+AccessModifierOffset: 0
+AlignConsecutiveAssignments: false
+AlignAfterOpenBracket: BlockIndent
+AlignTrailingComments: true
+
+# Inline = only inline short functions in classes or if empty
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: true
+AllowShortLoopsOnASingleLine: true
+AlwaysBreakBeforeMultilineStrings: true
+AlwaysBreakTemplateDeclarations: false
+BreakBeforeBinaryOperators: false
+BreakBeforeBraces: Attach
+BreakBeforeTernaryOperators: false
+ColumnLimit: 120
+IndentCaseLabels: true
+IndentWidth: 4
+Language: Cpp
+MaxEmptyLinesToKeep: 2
+NamespaceIndentation: All
+PointerBindsToType: false
+SpaceAfterCStyleCast: true
+SpaceBeforeParens: Never
+SpaceInEmptyParentheses: false
+SpacesBeforeTrailingComments: 1
+SpacesInCStyleCastParentheses: false
+SpacesInAngles: false
+SpacesInParentheses: false
+SpacesInContainerLiterals: false
+SpacesInSquareBrackets: false
+Standard: c++14
+TabWidth: 4
+UseTab: Never
