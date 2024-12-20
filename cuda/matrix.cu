@@ -5,7 +5,7 @@
 #include "error-check.hpp"
 #include "matrix.cuh"
 
-#define EPS 2.2204E-16
+#define EPS (float)(2.2204E-16)
 #define MAX_BLOCKS 65535
 
 
