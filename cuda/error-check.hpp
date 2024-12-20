@@ -50,7 +50,6 @@ const char *cublasGetErrorString(cublasStatus_t status) {
         default:
             return "UNKNOWN ERROR";
     }
-    return "unknown error";
 }
 
 inline void cuda_error_handler(cublasStatus_t code, const char *file, int line, bool abort = true) {

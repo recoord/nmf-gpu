@@ -213,10 +213,6 @@ void update_div(
         sumH2.dim[1] = 1;
     }
 
-    // // reallocate unpadded device memory
-    // allocate_matrix_on_device(&W0);
-    // allocate_matrix_on_device(&H0);
-
     // copy padded matrix to unpadded matrices
     copy_from_padded(W0, W);
     copy_from_padded(H0, H);
@@ -234,10 +230,6 @@ void update_div(
     destroy_matrix(&sumH2);
 
     copy_matrix_to_device(&X0, stream);
-
-    // copy device results to host memory
-    copy_matrix_from_device(&W0);
-    copy_matrix_from_device(&H0);
 
     // clean up extra reduction memory
     sum_cols_d(cleanup, W, sumW, M_params);

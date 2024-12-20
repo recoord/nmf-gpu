@@ -56,6 +56,11 @@ void write_matrix(matrix A, std::string file) {
     // write matrix to file using column-major order
     // dimensions are written as leading ints
 
+    size_t size = A.dim[0] * A.dim[1] * sizeof(float);
+    float *temp;
+    cudaAssert(cudaMallocHost((void **) &temp, size));
+    cudaAssert(cudaMemcpy(temp, A.mat_d, size, cudaMemcpyDeviceToHost));
+
     FILE *fp;
     size_t count;
 
@@ -63,9 +68,11 @@ void write_matrix(matrix A, std::string file) {
     count = fwrite(A.dim, sizeof(int), 2, fp);
     if(count < 2) fprintf(stderr, "write_matrix: fwrite error\n");
 
-    count = fwrite(A.mat, sizeof(float), A.dim[0] * A.dim[1], fp);
+    count = fwrite(temp, sizeof(float), A.dim[0] * A.dim[1], fp);
     if(count < (size_t) (A.dim[0] * A.dim[1])) fprintf(stderr, "write_matrix: fwrite error\n");
     fclose(fp);
+
+    cudaAssert(cudaFreeHost(temp));
 
     printf("write %s [%ix%i]\n", file.c_str(), A.dim[0], A.dim[1]);
 }
@@ -219,28 +226,6 @@ void copy_from_padded(matrix A, matrix Apad) {
     );
 }
 
-void copy_matrix_from_device_padded(matrix A, matrix Apad) {
-    // copy padded matrix on device to unpadded matrix on host
-
-    const int32_t M = A.dim[0];
-    const int32_t N = A.dim[1];
-    const int32_t M_padded = Apad.dim[0];
-    const int32_t N_padded = Apad.dim[1];
-
-    if(M > M_padded) {
-        fprintf(stderr, "copy_from_padded: padded number of rows must be >= original\n");
-        exit(1);
-    }
-    if(N > N_padded) {
-        fprintf(stderr, "copy_from_padded: padded number of cols must be >= original\n");
-        exit(1);
-    }
-
-    cudaMemcpy2D(
-        A.mat, sizeof(float) * M, Apad.mat_d, sizeof(float) * M_padded, sizeof(float) * M, N, cudaMemcpyDeviceToHost
-    );
-}
-
 void create_matrix_on_both(matrix *A, int32_t rows, int32_t cols, float value) {
     // create matrix on device  with all elements equal to 'value'
     // matrix dimensions are in dim[] {rows,cols}
@@ -326,21 +311,6 @@ void copy_matrix_on_device(matrix A, matrix B) {
     }
 
     cudaAssert(cudaMemcpy(B.mat_d, A.mat_d, sizeof(float) * N, cudaMemcpyDeviceToDevice));
-}
-
-void copy_matrix_from_device(matrix *A) {
-    size_t size = A->dim[0] * A->dim[1] * sizeof(float);
-
-    if(A->mat_d == NULL) {
-        fprintf(stderr, "copy_matrix_from_device: matrix not allocated on device\n");
-        exit(1);
-    }
-
-    if(A->mat == NULL) {
-        cudaMallocHost((void **) &(A->mat), size);
-    }
-
-    cudaAssert(cudaMemcpy(A->mat, A->mat_d, size, cudaMemcpyDeviceToHost));
 }
 
 void matrix_multiply_d(matrix a, matrix b, matrix c) {
