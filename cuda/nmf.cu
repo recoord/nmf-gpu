@@ -229,8 +229,6 @@ void update_div(
     destroy_matrix(&sumW);
     destroy_matrix(&sumH2);
 
-    copy_matrix_to_device(&X0, stream);
-
     // clean up extra reduction memory
     sum_cols_d(cleanup, W, sumW, M_params);
     sum_rows_d(cleanup, H, sumH2, N_params);

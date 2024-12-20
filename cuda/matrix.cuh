@@ -15,10 +15,10 @@ typedef enum { compute, cleanup } action_t;
 // creating, allocating, moving matrices
 matrix read_matrix(std::string file, cudaStream_t stream);
 void write_matrix(matrix A, std::string file);
-void create_matrix(matrix *A, int rows, int cols, float value);
+// void create_matrix(matrix *A, int rows, int cols, float value);
 void create_matrix_on_device(matrix *A, int rows, int cols, float value);
-void create_matrix_on_both(matrix *A, int rows, int cols, float value);
-void copy_matrix_to_device(matrix *A, cudaStream_t stream);
+// void create_matrix_on_both(matrix *A, int rows, int cols, float value);
+// void copy_matrix_to_device(matrix *A, cudaStream_t stream);
 void copy_matrix_on_device(matrix A, matrix B);
 void copy_to_padded(matrix A, matrix Apad);
 void copy_matrix_to_device_padded(matrix A, matrix Apad);

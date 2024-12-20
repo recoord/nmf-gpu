@@ -5,7 +5,7 @@
 #include "error-check.hpp"
 #include "matrix.cuh"
 
-#define EPS (float)(2.2204E-16)
+#define EPS (float) (2.2204E-16)
 #define MAX_BLOCKS 65535
 
 
@@ -39,13 +39,16 @@ matrix read_matrix(std::string file, cudaStream_t stream) {
     if(count < 2) fprintf(stderr, "read_matrix: fread error\n");
 
     size_t N = A.dim[0] * A.dim[1];
-    // cudaMallocHost((void**)&(A.mat),sizeof(float)*N); //page-locked memory (faster but limited)
-    A.mat = (float *) malloc(sizeof(float) * N);
-    count = fread(A.mat, sizeof(float), N, fp);
+    float *temp = (float *) malloc(sizeof(float) * N);
+    count = fread(temp, sizeof(float), N, fp);
     if(count < N) fprintf(stderr, "read_matrix: fread error\n");
     fclose(fp);
 
-    copy_matrix_to_device(&A, stream);
+    // copy_matrix_to_device(&A, stream);
+    cudaAssert(cudaMalloc((void **) &(A.mat_d), N * sizeof(float)));
+    cudaAssert(cudaMemcpyAsync(A.mat_d, temp, N * sizeof(float), cudaMemcpyHostToDevice, stream));
+
+    free(temp);
 
     printf("read %s [%ix%i]\n", file.c_str(), A.dim[0], A.dim[1]);
 
@@ -77,22 +80,22 @@ void write_matrix(matrix A, std::string file) {
     printf("write %s [%ix%i]\n", file.c_str(), A.dim[0], A.dim[1]);
 }
 
-void create_matrix(matrix *A, int32_t rows, int32_t cols, float value) {
-    // create matrix with all elements equal to 'value'
-    // matrix dimensions are in dim (rows,cols)
-    // set A->mat_d to NULL
+// void create_matrix(matrix *A, int32_t rows, int32_t cols, float value) {
+//     // create matrix with all elements equal to 'value'
+//     // matrix dimensions are in dim (rows,cols)
+//     // set A->mat_d to NULL
 
-    A->dim[0] = rows;
-    A->dim[1] = cols;
-    const int32_t N = A->dim[0] * A->dim[1];
+//     A->dim[0] = rows;
+//     A->dim[1] = cols;
+//     const int32_t N = A->dim[0] * A->dim[1];
 
-    A->mat = (float *) malloc(sizeof(float) * N);
-    for(int32_t i = 0; i < N; i++) A->mat[i] = value;
+//     A->mat = (float *) malloc(sizeof(float) * N);
+//     for(int32_t i = 0; i < N; i++) A->mat[i] = value;
 
-    if(A->mat_d != NULL) cudaFree(A->mat_d);
+//     if(A->mat_d != NULL) cudaFree(A->mat_d);
 
-    A->mat_d = NULL;
-}
+//     A->mat_d = NULL;
+// }
 
 void create_matrix_on_device(matrix *A, int32_t rows, int32_t cols, float value) {
     // create matrix on device  with all elements equal to 'value'
@@ -194,7 +197,7 @@ void copy_matrix_to_device_padded(matrix A, matrix Apad) {
 
     cudaError_t err;
     err = cudaMemcpy2D(
-        Apad.mat_d, sizeof(float) * M_padded, A.mat, sizeof(float) * M, sizeof(float) * M, N, cudaMemcpyHostToDevice
+        Apad.mat_d, sizeof(float) * M_padded, A.mat_d, sizeof(float) * M, sizeof(float) * M, N, cudaMemcpyDeviceToDevice
     );
     if(err != cudaSuccess) {
         fprintf(stderr, "copy_to_padded: error in cudaMemcpy2D [%i],%i\n", err, cudaErrorInvalidValue);
@@ -226,26 +229,26 @@ void copy_from_padded(matrix A, matrix Apad) {
     );
 }
 
-void create_matrix_on_both(matrix *A, int32_t rows, int32_t cols, float value) {
-    // create matrix on device  with all elements equal to 'value'
-    // matrix dimensions are in dim[] {rows,cols}
+// void create_matrix_on_both(matrix *A, int32_t rows, int32_t cols, float value) {
+//     // create matrix on device  with all elements equal to 'value'
+//     // matrix dimensions are in dim[] {rows,cols}
 
-    A->dim[0] = rows;
-    A->dim[1] = cols;
-    const int32_t N = A->dim[0] * A->dim[1];
-    cudaError_t err;
+//     A->dim[0] = rows;
+//     A->dim[1] = cols;
+//     const int32_t N = A->dim[0] * A->dim[1];
+//     cudaError_t err;
 
 
-    err = cudaMalloc((void **) &(A->mat_d), sizeof(float) * N);
-    if(err != cudaSuccess) {
-        fprintf(stderr, "create_matrix_on_both: cudaMalloc: ErrorMemoryAllocation\n");
-        exit(1);
-    }
+//     err = cudaMalloc((void **) &(A->mat_d), sizeof(float) * N);
+//     if(err != cudaSuccess) {
+//         fprintf(stderr, "create_matrix_on_both: cudaMalloc: ErrorMemoryAllocation\n");
+//         exit(1);
+//     }
 
-    A->mat = (float *) malloc(sizeof(float) * N);
-    for(int32_t i = 0; i < N; i++) A->mat[i] = value;
-    cudaMemcpy(A->mat_d, A->mat, sizeof(float) * N, cudaMemcpyHostToDevice);
-}
+//     A->mat = (float *) malloc(sizeof(float) * N);
+//     for(int32_t i = 0; i < N; i++) A->mat[i] = value;
+//     cudaMemcpy(A->mat_d, A->mat, sizeof(float) * N, cudaMemcpyHostToDevice);
+// }
 
 void destroy_matrix(matrix *A) {
     if(A->mat != NULL) cudaFreeHost(A->mat);
@@ -262,15 +265,15 @@ void free_matrix_on_device(matrix *A) {
     A->mat_d = NULL;
 }
 
-void copy_matrix_to_device(matrix *A, cudaStream_t stream) {
-    uint32_t size = A->dim[0] * A->dim[1] * sizeof(float);
+// void copy_matrix_to_device(matrix *A, cudaStream_t stream) {
+//     uint32_t size = A->dim[0] * A->dim[1] * sizeof(float);
 
-    if(A->mat_d == NULL) {
-        cudaAssert(cudaMalloc((void **) &(A->mat_d), size));
-    }
+//     if(A->mat_d == NULL) {
+//         cudaAssert(cudaMalloc((void **) &(A->mat_d), size));
+//     }
 
-    cudaAssert(cudaMemcpyAsync(A->mat_d, A->mat, size, cudaMemcpyHostToDevice, stream));
-}
+//     cudaAssert(cudaMemcpyAsync(A->mat_d, A->mat, size, cudaMemcpyHostToDevice, stream));
+// }
 
 void allocate_matrix_on_device(matrix *A) {
 
