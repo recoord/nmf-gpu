@@ -30,6 +30,14 @@ Matrix::Matrix(uint32_t rows, uint32_t cols) {
     this->data = nullptr;
 }
 
+Matrix::Matrix(float value, uint32_t rows, uint32_t cols) {
+    this->rows = rows;
+    this->cols = cols;
+    uint32_t size = rows * cols * sizeof(float);
+    cudaAssert(cudaMalloc((void **) &(this->data), size));
+    cudaAssert(cudaMemset(this->data, value, size));
+}
+
 Matrix::~Matrix() {}
 
 
@@ -93,30 +101,30 @@ void write_matrix(Matrix A, std::string file) {
     printf("write %s [%ix%i]\n", file.c_str(), A.rows, A.cols);
 }
 
-void create_matrix_on_device(Matrix *A, int32_t rows, int32_t cols, float value) {
-    // create Matrix on device  with all elements equal to 'value'
-    // Matrix dimensions are in dim[] {rows,cols}
+// void create_matrix_on_device(Matrix *A, int32_t rows, int32_t cols, float value) {
+//     // create Matrix on device  with all elements equal to 'value'
+//     // Matrix dimensions are in dim[] {rows,cols}
 
-    A->rows = rows;
-    A->cols = cols;
-    // A->mat = NULL;
+//     A->rows = rows;
+//     A->cols = cols;
+//     // A->mat = NULL;
 
-    const int32_t N = A->rows * A->cols;
+//     const int32_t N = A->rows * A->cols;
 
-    cudaError_t err;
-    err = cudaMalloc((void **) &(A->data), sizeof(float) * N);
-    // printf("device pointer: %p\n",A->data);
-    if(err != cudaSuccess) {
-        fprintf(stderr, "create_matrix_on_device: cudaMalloc: ErrorMemoryAllocation\n");
-        exit(1);
-    }
+//     cudaError_t err;
+//     err = cudaMalloc((void **) &(A->data), sizeof(float) * N);
+//     // printf("device pointer: %p\n",A->data);
+//     if(err != cudaSuccess) {
+//         fprintf(stderr, "create_matrix_on_device: cudaMalloc: ErrorMemoryAllocation\n");
+//         exit(1);
+//     }
 
-    float *temp = (float *) malloc(sizeof(float) * N);
-    for(int32_t i = 0; i < N; i++) temp[i] = value;
-    cudaMemcpy(A->data, temp, sizeof(float) * N, cudaMemcpyHostToDevice);
+//     float *temp = (float *) malloc(sizeof(float) * N);
+//     for(int32_t i = 0; i < N; i++) temp[i] = value;
+//     cudaMemcpy(A->data, temp, sizeof(float) * N, cudaMemcpyHostToDevice);
 
-    free(temp);
-}
+//     free(temp);
+// }
 
 /*
 void copy_to_padded_with_cols(Matrix A, Matrix Apad){

@@ -12,6 +12,7 @@ class Matrix {
     uint32_t cols;
 
     Matrix(uint32_t rows, uint32_t cols);
+    Matrix(float value, uint32_t rows, uint32_t cols);
     ~Matrix();
 };
 
@@ -20,7 +21,7 @@ typedef enum { compute, cleanup } action_t;
 // creating, allocating, moving matrices
 Matrix read_matrix(std::string file, cudaStream_t stream);
 void write_matrix(Matrix A, std::string file);
-void create_matrix_on_device(Matrix *A, int rows, int cols, float value);
+// void create_matrix_on_device(Matrix *A, int rows, int cols, float value);
 void copy_matrix_on_device(Matrix A, Matrix B);
 void copy_to_padded(Matrix A, Matrix Apad);
 void copy_matrix_to_device_padded(Matrix A, Matrix Apad);
