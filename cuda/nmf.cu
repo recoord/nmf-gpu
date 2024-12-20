@@ -9,8 +9,7 @@
 #define CONVERGE_THRESH 0 // set to zero to guarantee MAX_ITER iterations, 0.001 is a good value otherwise
 
 void update_div(
-    matrix W0, matrix H0, matrix X0, const float thresh, const int32_t max_iter, int32_t verbose,
-    cudaStream_t stream
+    matrix W0, matrix H0, matrix X0, const float thresh, const int32_t max_iter, int32_t verbose, cudaStream_t stream
 );
 uint32_t nextpow2(uint32_t x);
 
@@ -44,8 +43,7 @@ int32_t main(int32_t argc, char *argv[]) {
 
 
 void update_div(
-    matrix W0, matrix H0, matrix X0, const float thresh, const int32_t max_iter, int32_t verbose,
-    cudaStream_t stream
+    matrix W0, matrix H0, matrix X0, const float thresh, const int32_t max_iter, int32_t verbose, cudaStream_t stream
 ) {
     // run iterative multiplicative updates on W,H
 
@@ -68,9 +66,8 @@ void update_div(
     if(N % PAD_MULT != 0) N_padded = N + (PAD_MULT - (N % PAD_MULT));
 
     // find reduction parameters
-    int32_t MN_params[4] = {1, 1, 1, 1}; // M*N size reduction (whole matrix)
-    int32_t N_params[4] = {1, 1, 1, 1};  // N size reductions (rows)
-    int32_t M_params[4] = {1, 1, 1, 1};  // M size reductions (cols)
+    int32_t N_params[4] = {1, 1, 1, 1}; // N size reductions (rows)
+    int32_t M_params[4] = {1, 1, 1, 1}; // M size reductions (cols)
 
     int32_t rem;
     rem = nextpow2(N_padded / 128 + (!(N_padded % 128) ? 0 : 1));
@@ -96,11 +93,6 @@ void update_div(
         fprintf(stderr, "reduction parameter error\n");
         exit(1);
     }
-
-    MN_params[0] = M_params[0];
-    MN_params[1] = M_params[1];
-    MN_params[2] = N_params[0];
-    MN_params[3] = N_params[1];
 
     // block size in vector arithmetic operations
     const int32_t BLOCK_SIZE = 128;
