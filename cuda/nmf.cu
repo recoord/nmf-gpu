@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "error-check.hpp"
 #include "matrix.cuh"
 
 #define ITER_CHECK 25     // status printed and convergence check every ITER_CHECK iterations
@@ -12,6 +13,8 @@ void update_div(
     Matrix W0, Matrix H0, Matrix X0, const float thresh, const int32_t max_iter, int32_t verbose, cudaStream_t stream
 );
 uint32_t nextpow2(uint32_t x);
+Matrix read_matrix(std::string file, cudaStream_t stream);
+void write_matrix(Matrix A, std::string file);
 
 
 int32_t main(int32_t argc, char *argv[]) {
@@ -45,27 +48,27 @@ void update_div(
 
     cublasInit();
 
-    const int32_t M = W0.rows;
-    const int32_t K = W0.cols;
-    const int32_t N = H0.cols;
+    const uint32_t M = W0.rows;
+    const uint32_t K = W0.cols;
+    const uint32_t N = H0.cols;
 
     // pad Matrix dimensions to multiples of:
-    const int32_t PAD_MULT = 32;
+    const uint32_t PAD_MULT = 32;
 
-    int32_t M_padded = M;
+    uint32_t M_padded = M;
     if(M % PAD_MULT != 0) M_padded = M + (PAD_MULT - (M % PAD_MULT));
 
-    int32_t K_padded = K;
+    uint32_t K_padded = K;
     if(K % PAD_MULT != 0) K_padded = K + (PAD_MULT - (K % PAD_MULT));
 
-    int32_t N_padded = N;
+    uint32_t N_padded = N;
     if(N % PAD_MULT != 0) N_padded = N + (PAD_MULT - (N % PAD_MULT));
 
     // find reduction parameters
-    int32_t N_params[4] = {1, 1, 1, 1}; // N size reductions (rows)
-    int32_t M_params[4] = {1, 1, 1, 1}; // M size reductions (cols)
+    uint32_t N_params[4] = {1, 1, 1, 1}; // N size reductions (rows)
+    uint32_t M_params[4] = {1, 1, 1, 1}; // M size reductions (cols)
 
-    int32_t rem;
+    uint32_t rem;
     rem = nextpow2(N_padded / 128 + (!(N_padded % 128) ? 0 : 1));
     if(rem <= 128) {
         N_params[0] = 128;
@@ -110,15 +113,23 @@ void update_div(
     // Matrix to hold sum(H,2) [sum of rows of H]
     Matrix sumH2(0.0f, K_padded, 1);
 
-    // matrices to hold padded versions of matrices
+    // // matrices to hold padded versions of matrices
+    // Matrix W(0.0f, M_padded, K_padded);
+    // Matrix H(0.0f, K_padded, N_padded);
+    // Matrix X(0.0f, M_padded, N_padded);
+
+    // // move host matrices to padded device memory
+    // copy_matrix_to_device_padded(W0, W);
+    // copy_matrix_to_device_padded(H0, H);
+    // copy_matrix_to_device_padded(X0, X);
+
     Matrix W(0.0f, M_padded, K_padded);
     Matrix H(0.0f, K_padded, N_padded);
     Matrix X(0.0f, M_padded, N_padded);
 
-    // move host matrices to padded device memory
-    copy_matrix_to_device_padded(W0, W);
-    copy_matrix_to_device_padded(H0, H);
-    copy_matrix_to_device_padded(X0, X);
+    W0.clone_to_padded(&W);
+    H0.clone_to_padded(&H);
+    X0.clone_to_padded(&X);
 
     for(int32_t i = 0; i < max_iter; i++) {
         /* matlab algorithm
@@ -216,4 +227,60 @@ uint32_t nextpow2(uint32_t x) {
     x = x | (x >> 8);
     x = x | (x >> 16);
     return x + 1;
+}
+
+Matrix read_matrix(std::string file, cudaStream_t stream) {
+    // read Matrix in from file, store in column-major order
+
+    FILE *fp;
+    size_t count;
+
+    uint32_t rows, cols;
+
+    fp = fopen(file.c_str(), "rb");
+    count = fread(&rows, sizeof(uint32_t), 1, fp);
+    if(count < 1) fprintf(stderr, "read_matrix: fread error\n");
+    count = fread(&cols, sizeof(uint32_t), 1, fp);
+    if(count < 1) fprintf(stderr, "read_matrix: fread error\n");
+
+    size_t size = rows * cols;
+    float *temp = (float *) malloc(sizeof(float) * size);
+    count = fread(temp, sizeof(float), size, fp);
+    if(count < size) fprintf(stderr, "read_matrix: fread error\n");
+    fclose(fp);
+
+    Matrix A(temp, rows, cols);
+
+    free(temp);
+
+    printf("read %s [%ix%i]\n", file.c_str(), A.rows, A.cols);
+
+    return A;
+}
+
+void write_matrix(Matrix A, std::string file) {
+    // write Matrix to file using column-major order
+    // dimensions are written as leading ints
+
+    size_t size = A.rows * A.cols * sizeof(float);
+    float *temp;
+    cudaAssert(cudaMallocHost((void **) &temp, size));
+    cudaAssert(cudaMemcpy(temp, A.data, size, cudaMemcpyDeviceToHost));
+
+    FILE *fp;
+    size_t count;
+
+    fp = fopen(file.c_str(), "wb");
+    count = fwrite(&(A.rows), sizeof(uint32_t), 1, fp);
+    if(count < 1) fprintf(stderr, "write_matrix: fwrite error\n");
+    count = fwrite(&(A.cols), sizeof(uint32_t), 1, fp);
+    if(count < 1) fprintf(stderr, "write_matrix: fwrite error\n");
+
+    count = fwrite(temp, sizeof(float), A.rows * A.cols, fp);
+    if(count < (size_t) (A.rows * A.cols)) fprintf(stderr, "write_matrix: fwrite error\n");
+    fclose(fp);
+
+    cudaAssert(cudaFreeHost(temp));
+
+    printf("write %s [%ix%i]\n", file.c_str(), A.rows, A.cols);
 }

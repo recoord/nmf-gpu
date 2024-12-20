@@ -25,7 +25,7 @@ inline void cuda_error_handler(CUresult code, const char *file, int line, bool a
     }
 }
 
-const char *cublasGetErrorString(cublasStatus_t status) {
+static const char *cublasGetErrorString(cublasStatus_t status) {
     switch(status) {
         case CUBLAS_STATUS_SUCCESS:
             return "CUBLAS_STATUS_SUCCESS";

@@ -1,6 +1,7 @@
 #include <cuda_runtime_api.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <cassert>
 
 #include "error-check.hpp"
 #include "matrix.cuh"
@@ -53,70 +54,23 @@ Matrix::~Matrix() {
     // }
 }
 
+void Matrix::clone_to_padded(Matrix* padded) {
+    assert(this->rows <= padded->rows);
+    assert(this->cols <= padded->cols);
 
-Matrix read_matrix(std::string file, cudaStream_t stream) {
-    // read Matrix in from file, store in column-major order
-
-    FILE *fp;
-    size_t count;
-
-    uint32_t rows, cols;
-
-    fp = fopen(file.c_str(), "rb");
-    count = fread(&rows, sizeof(uint32_t), 1, fp);
-    if(count < 1) fprintf(stderr, "read_matrix: fread error\n");
-    count = fread(&cols, sizeof(uint32_t), 1, fp);
-    if(count < 1) fprintf(stderr, "read_matrix: fread error\n");
-
-    size_t size = rows * cols;
-    float *temp = (float *) malloc(sizeof(float) * size);
-    count = fread(temp, sizeof(float), size, fp);
-    if(count < size) fprintf(stderr, "read_matrix: fread error\n");
-    fclose(fp);
-
-    Matrix A(temp, rows, cols);
-
-    free(temp);
-
-    printf("read %s [%ix%i]\n", file.c_str(), A.rows, A.cols);
-
-    return A;
-}
-
-void write_matrix(Matrix A, std::string file) {
-    // write Matrix to file using column-major order
-    // dimensions are written as leading ints
-
-    size_t size = A.rows * A.cols * sizeof(float);
-    float *temp;
-    cudaAssert(cudaMallocHost((void **) &temp, size));
-    cudaAssert(cudaMemcpy(temp, A.data, size, cudaMemcpyDeviceToHost));
-
-    FILE *fp;
-    size_t count;
-
-    fp = fopen(file.c_str(), "wb");
-    count = fwrite(&(A.rows), sizeof(uint32_t), 1, fp);
-    if(count < 1) fprintf(stderr, "write_matrix: fwrite error\n");
-    count = fwrite(&(A.cols), sizeof(uint32_t), 1, fp);
-    if(count < 1) fprintf(stderr, "write_matrix: fwrite error\n");
-
-    count = fwrite(temp, sizeof(float), A.rows * A.cols, fp);
-    if(count < (size_t) (A.rows * A.cols)) fprintf(stderr, "write_matrix: fwrite error\n");
-    fclose(fp);
-
-    cudaAssert(cudaFreeHost(temp));
-
-    printf("write %s [%ix%i]\n", file.c_str(), A.rows, A.cols);
+    cudaAssert(cudaMemcpy2D(
+        padded->data, padded->rows * sizeof(float), this->data, this->rows * sizeof(float), this->rows * sizeof(float),
+        this->cols, cudaMemcpyDeviceToDevice
+    ));
 }
 
 void copy_to_padded(Matrix A, Matrix Apad) {
     // copy unpadded Matrix on device to padded Matrix on device
 
-    const int32_t M = A.rows;
-    const int32_t N = A.cols;
-    const int32_t M_padded = Apad.rows;
-    const int32_t N_padded = Apad.cols;
+    const uint32_t M = A.rows;
+    const uint32_t N = A.cols;
+    const uint32_t M_padded = Apad.rows;
+    const uint32_t N_padded = Apad.cols;
 
     if(M > M_padded) {
         fprintf(stderr, "copy_to_padded: padded number of rows must be >= original\n");
@@ -142,10 +96,10 @@ void copy_to_padded(Matrix A, Matrix Apad) {
 void copy_matrix_to_device_padded(Matrix A, Matrix Apad) {
     // copy unpadded Matrix on host to padded Matrix on device
 
-    const int32_t M = A.rows;
-    const int32_t N = A.cols;
-    const int32_t M_padded = Apad.rows;
-    const int32_t N_padded = Apad.cols;
+    const uint32_t M = A.rows;
+    const uint32_t N = A.cols;
+    const uint32_t M_padded = Apad.rows;
+    const uint32_t N_padded = Apad.cols;
 
     if(M > M_padded) {
         fprintf(stderr, "copy_to_padded: padded number of rows must be >= original\n");
@@ -171,10 +125,10 @@ void copy_matrix_to_device_padded(Matrix A, Matrix Apad) {
 void copy_from_padded(Matrix A, Matrix Apad) {
     // copy padded Matrix on device to unpadded Matrix on device
 
-    const int32_t M = A.rows;
-    const int32_t N = A.cols;
-    const int32_t M_padded = Apad.rows;
-    const int32_t N_padded = Apad.cols;
+    const uint32_t M = A.rows;
+    const uint32_t N = A.cols;
+    const uint32_t M_padded = Apad.rows;
+    const uint32_t N_padded = Apad.cols;
 
     if(M > M_padded) {
         fprintf(stderr, "copy_from_padded: padded number of rows must be >= original\n");
@@ -196,7 +150,7 @@ void copy_matrix_on_device(Matrix A, Matrix B) {
         fprintf(stderr, "copy_matrix_on_device: dimension error\n");
         exit(1);
     }
-    const int32_t N = A.rows * A.cols;
+    const uint32_t N = A.rows * A.cols;
 
     if(A.data == NULL) {
         fprintf(stderr, "copy_matrix_on_device: source Matrix not allocated on device\n");
@@ -228,7 +182,7 @@ void matrix_multiply_ABt_d(Matrix a, Matrix b, Matrix c) {
     cudaAssert(cublasGetError());
 }
 
-void element_divide_d(Matrix a, Matrix b, Matrix c, int32_t block_size) {
+void element_divide_d(Matrix a, Matrix b, Matrix c, uint32_t block_size) {
     // c = a./b
 
     if(a.rows != b.rows || a.rows != c.rows || a.cols != b.cols || a.cols != c.cols) {
@@ -251,7 +205,7 @@ __global__ void vecDiv(float *a, float *b, float *c, const int32_t N) {
     // c[i] = __fdividef(a[i],b[i]);  //faster, less-accurate divide
 }
 
-void element_multiply_d(Matrix a, Matrix b, Matrix c, int32_t block_size) {
+void element_multiply_d(Matrix a, Matrix b, Matrix c, uint32_t block_size) {
     // c = a./b
 
     if(a.rows != b.rows || a.rows != c.rows || a.cols != b.cols || a.cols != c.cols) {
@@ -280,7 +234,7 @@ __global__ void vecEps(float *a, const int32_t N) {
     if(a[i] < EPS && i < N) a[i] = EPS;
 }
 
-void matrix_eps_d(Matrix a, int32_t block_size, cudaStream_t stream) {
+void matrix_eps_d(Matrix a, uint32_t block_size, cudaStream_t stream) {
 
     const int32_t N = a.rows * a.cols;
 
@@ -347,7 +301,7 @@ __global__ void colMul(float *a, float *b, float *c, int32_t M, int32_t N) {
     }
 }
 
-void sum_cols_d(action_t action, Matrix a, Matrix c, int32_t *params) {
+void sum_cols_d(action_t action, Matrix a, Matrix c, uint32_t *params) {
     // memory allocated and not freed
     // block1 - block size for first reduction level
     // block2 - "" for 2nd "" (set to 1 if not using 2nd level)
@@ -475,7 +429,7 @@ void sum_cols_d(action_t action, Matrix a, Matrix c, int32_t *params) {
     }
 }
 
-void sum_rows_d(action_t action, Matrix a, Matrix c, int32_t *params) {
+void sum_rows_d(action_t action, Matrix a, Matrix c, uint32_t *params) {
     // memory allocated and not freed
     // block1 - block size for first reduction level
     // block2 - "" for 2nd "" (set to 1 if not using 2nd level)
@@ -603,7 +557,7 @@ void sum_rows_d(action_t action, Matrix a, Matrix c, int32_t *params) {
     }
 }
 
-float nan_check_d(action_t action, Matrix a, int32_t *params) {
+float nan_check_d(action_t action, Matrix a, uint32_t *params) {
     // memory allocated and not freed
     // block1 - block size for first reduction level
     // block2 - "" for 2nd "" (set to 1 if not using 2nd level)
@@ -734,7 +688,7 @@ float nan_check_d(action_t action, Matrix a, int32_t *params) {
     return result;
 }
 
-float zero_check_d(action_t action, Matrix a, int32_t *params) {
+float zero_check_d(action_t action, Matrix a, uint32_t *params) {
     // memory allocated and not freed
     // block1 - block size for first reduction level
     // block2 - "" for 2nd "" (set to 1 if not using 2nd level)
