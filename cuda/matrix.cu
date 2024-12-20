@@ -80,30 +80,13 @@ void write_matrix(matrix A, std::string file) {
     printf("write %s [%ix%i]\n", file.c_str(), A.dim[0], A.dim[1]);
 }
 
-// void create_matrix(matrix *A, int32_t rows, int32_t cols, float value) {
-//     // create matrix with all elements equal to 'value'
-//     // matrix dimensions are in dim (rows,cols)
-//     // set A->mat_d to NULL
-
-//     A->dim[0] = rows;
-//     A->dim[1] = cols;
-//     const int32_t N = A->dim[0] * A->dim[1];
-
-//     A->mat = (float *) malloc(sizeof(float) * N);
-//     for(int32_t i = 0; i < N; i++) A->mat[i] = value;
-
-//     if(A->mat_d != NULL) cudaFree(A->mat_d);
-
-//     A->mat_d = NULL;
-// }
-
 void create_matrix_on_device(matrix *A, int32_t rows, int32_t cols, float value) {
     // create matrix on device  with all elements equal to 'value'
     // matrix dimensions are in dim[] {rows,cols}
 
     A->dim[0] = rows;
     A->dim[1] = cols;
-    A->mat = NULL;
+    // A->mat = NULL;
 
     const int32_t N = A->dim[0] * A->dim[1];
 
@@ -229,30 +212,7 @@ void copy_from_padded(matrix A, matrix Apad) {
     );
 }
 
-// void create_matrix_on_both(matrix *A, int32_t rows, int32_t cols, float value) {
-//     // create matrix on device  with all elements equal to 'value'
-//     // matrix dimensions are in dim[] {rows,cols}
-
-//     A->dim[0] = rows;
-//     A->dim[1] = cols;
-//     const int32_t N = A->dim[0] * A->dim[1];
-//     cudaError_t err;
-
-
-//     err = cudaMalloc((void **) &(A->mat_d), sizeof(float) * N);
-//     if(err != cudaSuccess) {
-//         fprintf(stderr, "create_matrix_on_both: cudaMalloc: ErrorMemoryAllocation\n");
-//         exit(1);
-//     }
-
-//     A->mat = (float *) malloc(sizeof(float) * N);
-//     for(int32_t i = 0; i < N; i++) A->mat[i] = value;
-//     cudaMemcpy(A->mat_d, A->mat, sizeof(float) * N, cudaMemcpyHostToDevice);
-// }
-
 void destroy_matrix(matrix *A) {
-    if(A->mat != NULL) cudaFreeHost(A->mat);
-    A->mat = NULL;
     if(A->mat_d != NULL) cudaFree(A->mat_d);
     A->mat_d = NULL;
 
@@ -265,25 +225,11 @@ void free_matrix_on_device(matrix *A) {
     A->mat_d = NULL;
 }
 
-// void copy_matrix_to_device(matrix *A, cudaStream_t stream) {
-//     uint32_t size = A->dim[0] * A->dim[1] * sizeof(float);
-
-//     if(A->mat_d == NULL) {
-//         cudaAssert(cudaMalloc((void **) &(A->mat_d), size));
-//     }
-
-//     cudaAssert(cudaMemcpyAsync(A->mat_d, A->mat, size, cudaMemcpyHostToDevice, stream));
-// }
-
 void allocate_matrix_on_device(matrix *A) {
 
     const int32_t N = A->dim[0] * A->dim[1];
     cudaError_t err;
 
-    if(A->mat == NULL) {
-        fprintf(stderr, "allocate_matrix_on_device: matrix not allocated on host\n");
-        exit(1);
-    }
     if(A->mat_d == NULL) {
         err = cudaMalloc((void **) &(A->mat_d), sizeof(float) * N);
         if(err != cudaSuccess) {
@@ -1322,53 +1268,6 @@ __global__ void reduce2DStrided(float *g_idata, float *g_odata, int32_t N, int32
 
     // write result for this block to global mem
     if(tid == 0) g_odata[blockIdx.y + blockIdx.x * gridDim.y] = sdata[0];
-}
-
-
-/*
-__global__ void reduce0(float *g_idata, float *g_odata, int32_t N){
-    extern __shared__ float sdata[];
-    // each thread loads one element from global to shared mem
-    int32_t tid = threadIdx.x;
-    int32_t i = blockIdx.x*blockDim.x*2 + threadIdx.x;
-    if((i+blockDim.x)<N)
-    sdata[tid] = g_idata[i] + g_idata[i+blockDim.x];
-    else if(i<N)
-    sdata[tid] = g_idata[i];
-    else
-    sdata[tid] = 0.0;
-    __syncthreads();
-    // do reduction in shared mem
-    for (uint32_t s=blockDim.x/2; s>32; s>>=1) {
-    if (tid < s) {
-        sdata[tid] += sdata[tid + s];
-    }
-    __syncthreads();
-    }
-    if (tid < 32)
-    {
-    sdata[tid] += sdata[tid + 32];
-    sdata[tid] += sdata[tid + 16];
-    sdata[tid] += sdata[tid + 8];
-    sdata[tid] += sdata[tid + 4];
-    sdata[tid] += sdata[tid + 2];
-    sdata[tid] += sdata[tid + 1];
-    }
-
-    // do reduction in shared mem
-
-    // write result for this block to global mem
-    if (tid == 0) g_odata[blockIdx.x] = sdata[0];
-}
-*/
-
-
-float zero_check(matrix a) {
-    int32_t i;
-    float s = 0;
-    const int32_t N = a.dim[0] * a.dim[1];
-    for(i = 0; i < N; i++) s += (float) (a.mat[i] == 0);
-    return s;
 }
 
 void grid2D(dim3 *dimGrid) {
