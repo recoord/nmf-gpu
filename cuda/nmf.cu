@@ -98,31 +98,13 @@ void update_div(
 
     // initialize temp matrices -----------------------
 
-    // Matrix to hold X./(W*H+EPS)
-    Matrix Z(0.0f, M_padded, N_padded);
+    Matrix Z(0.0f, M_padded, N_padded); // Matrix to hold X./(W*H+EPS)
+    Matrix WtZ(0.0f, K_padded, N_padded); // Matrix to hold W'*Z
+    Matrix ZHt(0.0f, M_padded, K_padded); // Matrix to hold Z*H'
+    Matrix sumW(0.0f, 1, K_padded); // Matrix to hold sum(W) [sum of cols of W]
+    Matrix sumH2(0.0f, K_padded, 1); // Matrix to hold sum(H,2) [sum of rows of H]
 
-    // Matrix to hold W'*Z
-    Matrix WtZ(0.0f, K_padded, N_padded);
-
-    // Matrix to hold Z*H'
-    Matrix ZHt(0.0f, M_padded, K_padded);
-
-    // Matrix to hold sum(W) [sum of cols of W]
-    Matrix sumW(0.0f, 1, K_padded);
-
-    // Matrix to hold sum(H,2) [sum of rows of H]
-    Matrix sumH2(0.0f, K_padded, 1);
-
-    // // matrices to hold padded versions of matrices
-    // Matrix W(0.0f, M_padded, K_padded);
-    // Matrix H(0.0f, K_padded, N_padded);
-    // Matrix X(0.0f, M_padded, N_padded);
-
-    // // move host matrices to padded device memory
-    // copy_matrix_to_device_padded(W0, W);
-    // copy_matrix_to_device_padded(H0, H);
-    // copy_matrix_to_device_padded(X0, X);
-
+    // matrices to hold padded versions of matrices
     Matrix W(0.0f, M_padded, K_padded);
     Matrix H(0.0f, K_padded, N_padded);
     Matrix X(0.0f, M_padded, N_padded);
