@@ -98,16 +98,18 @@ void update_div(
 
     // initialize temp matrices -----------------------
 
-    Matrix Z(0.0f, M_padded, N_padded); // Matrix to hold X./(W*H+EPS)
-    Matrix WtZ(0.0f, K_padded, N_padded); // Matrix to hold W'*Z
-    Matrix ZHt(0.0f, M_padded, K_padded); // Matrix to hold Z*H'
-    Matrix sumW(0.0f, 1, K_padded); // Matrix to hold sum(W) [sum of cols of W]
-    Matrix sumH2(0.0f, K_padded, 1); // Matrix to hold sum(H,2) [sum of rows of H]
+    // TODO: Why can't the other matrices be initialized with padding=true?
+
+    Matrix Z(0.0f, M, N, true);                  // Matrix to hold X./(W*H+EPS)
+    Matrix WtZ(0.0f, K_padded, N_padded, false); // Matrix to hold W'*Z
+    Matrix ZHt(0.0f, M_padded, K_padded, false); // Matrix to hold Z*H'
+    Matrix sumW(0.0f, 1, K_padded, false);       // Matrix to hold sum(W) [sum of cols of W]
+    Matrix sumH2(0.0f, K_padded, 1, false);      // Matrix to hold sum(H,2) [sum of rows of H]
 
     // matrices to hold padded versions of matrices
-    Matrix W(0.0f, M_padded, K_padded);
-    Matrix H(0.0f, K_padded, N_padded);
-    Matrix X(0.0f, M_padded, N_padded);
+    Matrix W(0.0f, M, K, true);
+    Matrix H(0.0f, K, N, true);
+    Matrix X(0.0f, M, N, true);
 
     W0.copy_to_padded(&W);
     H0.copy_to_padded(&H);
@@ -231,7 +233,7 @@ Matrix read_matrix(std::string file, cudaStream_t stream) {
     if(count < size) fprintf(stderr, "read_matrix: fread error\n");
     fclose(fp);
 
-    Matrix A(temp, rows, cols);
+    Matrix A(temp, rows, cols, false);
 
     free(temp);
 

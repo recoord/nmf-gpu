@@ -8,6 +8,7 @@
 
 #define EPS (float) (2.2204E-16)
 #define MAX_BLOCKS 65535
+#define PAD_MULT 32
 
 
 __global__ void vecEps(float *a, const int32_t N);
@@ -25,24 +26,38 @@ template <uint32_t blockSize> __global__ void reduce1DNan(float *g_idata1, float
 template <uint32_t blockSize> __global__ void reduce1DEql(float *g_idata1, float *g_odata, int32_t N);
 void grid2D(dim3 *dimGrid);
 
-Matrix::Matrix(uint32_t rows, uint32_t cols) {
+Matrix::Matrix(uint32_t rows, uint32_t cols, bool add_padding) {
     this->rows = rows;
     this->cols = cols;
+
+    if(add_padding) {
+        this->add_padding();
+    }
 
     cudaAssert(cudaMalloc((void **) &(this->data), rows * cols * sizeof(float)));
 }
 
-Matrix::Matrix(float *host_data, uint32_t rows, uint32_t cols) {
+Matrix::Matrix(float *host_data, uint32_t rows, uint32_t cols, bool add_padding) {
     this->rows = rows;
     this->cols = cols;
+
+    if(add_padding) {
+        this->add_padding();
+    }
+
     uint32_t size = rows * cols * sizeof(float);
     cudaAssert(cudaMalloc((void **) &(this->data), size));
     cudaAssert(cudaMemcpy(this->data, host_data, size, cudaMemcpyHostToDevice));
 }
 
-Matrix::Matrix(float value, uint32_t rows, uint32_t cols) {
+Matrix::Matrix(float value, uint32_t rows, uint32_t cols, bool add_padding) {
     this->rows = rows;
     this->cols = cols;
+
+    if(add_padding) {
+        this->add_padding();
+    }
+
     uint32_t size = rows * cols * sizeof(float);
     cudaAssert(cudaMalloc((void **) &(this->data), size));
     cudaAssert(cudaMemset(this->data, value, size));
@@ -52,6 +67,15 @@ Matrix::~Matrix() {
     // if(this->data != nullptr) {
     //     cudaFree(this->data);
     // }
+}
+
+void Matrix::add_padding() {
+    if(this->rows % PAD_MULT != 0) {
+        this->rows = this->rows + (PAD_MULT - (this->rows % PAD_MULT));
+    }
+    if(this->cols % PAD_MULT != 0) {
+        this->cols = this->cols + (PAD_MULT - (this->cols % PAD_MULT));
+    }
 }
 
 void Matrix::copy_to_padded(Matrix *padded) {
