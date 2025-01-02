@@ -74,16 +74,6 @@ void update_div(
     const uint32_t K = W0.cols;
     const uint32_t N = H0.cols;
 
-    // pad Matrix dimensions to multiples of:
-    uint32_t M_padded = M;
-    if(M % PAD_MULT != 0) M_padded = M + (PAD_MULT - (M % PAD_MULT));
-
-    uint32_t K_padded = K;
-    if(K % PAD_MULT != 0) K_padded = K + (PAD_MULT - (K % PAD_MULT));
-
-    uint32_t N_padded = N;
-    if(N % PAD_MULT != 0) N_padded = N + (PAD_MULT - (N % PAD_MULT));
-
     // find reduction parameters
     uint32_t N_params[4]; // N size reductions (rows)
     uint32_t M_params[4]; // M size reductions (cols)
@@ -95,14 +85,11 @@ void update_div(
     const int32_t BLOCK_SIZE = 128;
 
     // initialize temp matrices -----------------------
-
-    // TODO: Why can't the other matrices be initialized with padding=true?
-
-    Matrix Z(0.0f, M, N, true);                  // Matrix to hold X./(W*H+EPS)
-    Matrix WtZ(0.0f, K_padded, N_padded, false); // Matrix to hold W'*Z
-    Matrix ZHt(0.0f, M_padded, K_padded, false); // Matrix to hold Z*H'
-    Matrix sumW(0.0f, 1, K_padded, false);       // Matrix to hold sum(W) [sum of cols of W]
-    Matrix sumH2(0.0f, K_padded, 1, false);      // Matrix to hold sum(H,2) [sum of rows of H]
+    Matrix Z(0.0f, M, N, true);     // Matrix to hold X./(W*H+EPS)
+    Matrix WtZ(0.0f, K, N, true);   // Matrix to hold W'*Z
+    Matrix ZHt(0.0f, M, K, true);   // Matrix to hold Z*H'
+    Matrix sumW(0.0f, 1, K, true);  // Matrix to hold sum(W) [sum of cols of W]
+    Matrix sumH2(0.0f, K, 1, true); // Matrix to hold sum(H,2) [sum of rows of H]
 
     // matrices to hold padded versions of matrices
     Matrix W(0.0f, M, K, true);

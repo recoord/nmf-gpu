@@ -56,7 +56,7 @@ Matrix::Matrix(float value, uint32_t rows, uint32_t cols, bool add_padding) {
         this->add_padding();
     }
 
-    uint32_t size = rows * cols * sizeof(float);
+    uint32_t size = this->rows * this->cols * sizeof(float);
     cudaAssert(cudaMalloc((void **) &(this->data), size));
     cudaAssert(cudaMemset(this->data, value, size));
 }
@@ -68,10 +68,10 @@ Matrix::~Matrix() {
 }
 
 void Matrix::add_padding() {
-    if(this->rows % PAD_MULT != 0) {
+    if(this->rows != 1 && this->rows % PAD_MULT != 0) {
         this->rows = this->rows + (PAD_MULT - (this->rows % PAD_MULT));
     }
-    if(this->cols % PAD_MULT != 0) {
+    if(this->cols != 1 && this->cols % PAD_MULT != 0) {
         this->cols = this->cols + (PAD_MULT - (this->cols % PAD_MULT));
     }
 }
