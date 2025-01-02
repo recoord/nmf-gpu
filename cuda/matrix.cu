@@ -49,7 +49,11 @@ Matrix::Matrix(float *host_data, uint32_t rows, uint32_t cols, bool add_padding)
 
     uint32_t size = this->rows_padded * this->cols_padded * sizeof(float);
     cudaAssert(cudaMalloc((void **) &(this->data), size));
-    cudaAssert(cudaMemcpy(this->data, host_data, size, cudaMemcpyHostToDevice));
+    // cudaAssert(cudaMemcpy(this->data, host_data, size, cudaMemcpyHostToDevice));
+    cudaAssert(cudaMemcpy2D(
+        this->data, this->rows_padded * sizeof(float), host_data, this->rows * sizeof(float),
+        this->rows * sizeof(float), this->cols, cudaMemcpyHostToDevice
+    ));
 }
 
 Matrix::Matrix(float value, uint32_t rows, uint32_t cols, bool add_padding) {

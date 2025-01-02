@@ -11,46 +11,32 @@
 #define CONVERGE_THRESH 0 // set to zero to guarantee MAX_ITER iterations, 0.001 is a good value otherwise
 
 void update_div(
-    Matrix W0, Matrix H0, Matrix X0, const uint32_t M, const uint32_t K, const uint32_t N, const float thresh,
-    const int32_t max_iter, int32_t verbose, cudaStream_t stream
+    Matrix W, Matrix H, Matrix X, const float thresh, const int32_t max_iter, int32_t verbose, cudaStream_t stream
 );
 uint32_t nextpow2(uint32_t x);
 Matrix read_matrix(std::string file, cudaStream_t stream);
-void write_matrix(Matrix A_padded, uint32_t rows, uint32_t cols, std::string file);
+void write_matrix(Matrix A_padded, std::string file);
 
 
 int32_t main(int32_t argc, char *argv[]) {
     cudaStream_t stream = NULL;
 
-    Matrix X0 = read_matrix("../X.bin", stream);
-    Matrix H0 = read_matrix("../H.bin", stream);
-    Matrix W0 = read_matrix("../W.bin", stream);
-
-    const uint32_t M = W0.rows;
-    const uint32_t K = W0.cols;
-    const uint32_t N = H0.cols;
-
-    // matrices to hold padded versions of matrices
-    Matrix W(0.0f, M, K, true);
-    Matrix H(0.0f, K, N, true);
-    Matrix X(0.0f, M, N, true);
-
-    X0.copy_to_padded(&X);
-    H0.copy_to_padded(&H);
-    W0.copy_to_padded(&W);
+    Matrix X = read_matrix("../X.bin", stream);
+    Matrix H = read_matrix("../H.bin", stream);
+    Matrix W = read_matrix("../W.bin", stream);
 
     // make sure no zero elements
-    matrix_eps_d(X0, 128, stream);
-    matrix_eps_d(H0, 128, stream);
-    matrix_eps_d(W0, 128, stream);
+    matrix_eps_d(X, 128, stream);
+    matrix_eps_d(H, 128, stream);
+    matrix_eps_d(W, 128, stream);
 
     // iterative nmf minimization
-    update_div(W, H, X, M, K, N, CONVERGE_THRESH, MAX_ITER, 1, stream);
+    update_div(W, H, X, CONVERGE_THRESH, MAX_ITER, 1, stream);
 
     // write results matrices to binary files
     // (can be read with export_bin.m in Matlab)
-    write_matrix(W, W0.rows, W0.cols, "../Wout.bin");
-    write_matrix(H, H0.rows, H0.cols, "../Hout.bin");
+    write_matrix(W, "../Wout.bin");
+    write_matrix(H, "../Hout.bin");
 
     return 0;
 }
@@ -79,12 +65,13 @@ void init_params(uint32_t value, uint32_t *params) {
 }
 
 void update_div(
-    Matrix W, Matrix H, Matrix X, const uint32_t M, const uint32_t K, const uint32_t N, const float thresh,
-    const int32_t max_iter, int32_t verbose, cudaStream_t stream
+    Matrix W, Matrix H, Matrix X, const float thresh, const int32_t max_iter, int32_t verbose, cudaStream_t stream
 ) {
-    // run iterative multiplicative updates on W,H
-
     cublasInit();
+
+    const uint32_t M = W.rows;
+    const uint32_t K = W.cols;
+    const uint32_t N = H.cols;
 
     // find reduction parameters
     uint32_t N_params[4]; // N size reductions (rows)
@@ -217,7 +204,7 @@ Matrix read_matrix(std::string file, cudaStream_t stream) {
     if(count < size) fprintf(stderr, "read_matrix: fread error\n");
     fclose(fp);
 
-    Matrix A(temp, rows, cols, false);
+    Matrix A(temp, rows, cols, true);
 
     free(temp);
 
@@ -226,34 +213,34 @@ Matrix read_matrix(std::string file, cudaStream_t stream) {
     return A;
 }
 
-void write_matrix(Matrix A_padded, uint32_t rows, uint32_t cols, std::string file) {
+void write_matrix(Matrix A_padded, std::string file) {
     // write Matrix to file using column-major order
     // dimensions are written as leading ints
 
-    assert(rows <= A_padded.rows_padded);
-    assert(cols <= A_padded.cols_padded);
+    assert(A_padded.rows <= A_padded.rows_padded);
+    assert(A_padded.cols <= A_padded.cols_padded);
 
     float *temp;
-    cudaAssert(cudaMallocHost((void **) &temp, rows * cols * sizeof(float)));
+    cudaAssert(cudaMallocHost((void **) &temp, A_padded.rows * A_padded.cols * sizeof(float)));
     cudaMemcpy2D(
-        temp, sizeof(float) * rows, A_padded.data, sizeof(float) * A_padded.rows_padded, sizeof(float) * rows, cols,
-        cudaMemcpyDeviceToHost
+        temp, sizeof(float) * A_padded.rows, A_padded.data, sizeof(float) * A_padded.rows_padded,
+        sizeof(float) * A_padded.rows, A_padded.cols, cudaMemcpyDeviceToHost
     );
 
     FILE *fp;
     size_t count;
 
     fp = fopen(file.c_str(), "wb");
-    count = fwrite(&(rows), sizeof(uint32_t), 1, fp);
+    count = fwrite(&(A_padded.rows), sizeof(uint32_t), 1, fp);
     if(count < 1) fprintf(stderr, "write_matrix: fwrite error\n");
-    count = fwrite(&(cols), sizeof(uint32_t), 1, fp);
+    count = fwrite(&(A_padded.cols), sizeof(uint32_t), 1, fp);
     if(count < 1) fprintf(stderr, "write_matrix: fwrite error\n");
 
-    count = fwrite(temp, sizeof(float), rows * cols, fp);
-    if(count < (size_t) (rows * cols)) fprintf(stderr, "write_matrix: fwrite error\n");
+    count = fwrite(temp, sizeof(float), A_padded.rows * A_padded.cols, fp);
+    if(count < (size_t) (A_padded.rows * A_padded.cols)) fprintf(stderr, "write_matrix: fwrite error\n");
     fclose(fp);
 
     cudaAssert(cudaFreeHost(temp));
 
-    printf("write %s [%ix%i]\n", file.c_str(), rows, cols);
+    printf("write %s [%ix%i]\n", file.c_str(), A_padded.rows, A_padded.cols);
 }
