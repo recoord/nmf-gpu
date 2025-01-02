@@ -2,4 +2,6 @@
 *.bin
 *.o
 cuda/nmf
+*.nsys-rep
+*.ncu-rep
 
