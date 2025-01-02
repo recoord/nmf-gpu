@@ -18,11 +18,9 @@ class Matrix {
     uint32_t rows_padded;
     uint32_t cols_padded;
 
-    void copy_to_padded(Matrix *padded);
-
-    Matrix(uint32_t rows, uint32_t cols, bool add_padding);
-    Matrix(float *host_data, uint32_t rows, uint32_t cols, bool add_padding);
-    Matrix(float value, uint32_t rows, uint32_t cols, bool add_padding);
+    Matrix(uint32_t rows, uint32_t cols);
+    Matrix(float *host_data, uint32_t rows, uint32_t cols);
+    Matrix(float value, uint32_t rows, uint32_t cols);
     ~Matrix();
 };
 

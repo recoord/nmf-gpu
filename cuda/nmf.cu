@@ -84,11 +84,11 @@ void update_div(
     const int32_t BLOCK_SIZE = 128;
 
     // initialize temp matrices -----------------------
-    Matrix Z(0.0f, M, N, true);     // Matrix to hold X./(W*H+EPS)
-    Matrix WtZ(0.0f, K, N, true);   // Matrix to hold W'*Z
-    Matrix ZHt(0.0f, M, K, true);   // Matrix to hold Z*H'
-    Matrix sumW(0.0f, 1, K, true);  // Matrix to hold sum(W) [sum of cols of W]
-    Matrix sumH2(0.0f, K, 1, true); // Matrix to hold sum(H,2) [sum of rows of H]
+    Matrix Z(0.0f, M, N);     // Matrix to hold X./(W*H+EPS)
+    Matrix WtZ(0.0f, K, N);   // Matrix to hold W'*Z
+    Matrix ZHt(0.0f, M, K);   // Matrix to hold Z*H'
+    Matrix sumW(0.0f, 1, K);  // Matrix to hold sum(W) [sum of cols of W]
+    Matrix sumH2(0.0f, K, 1); // Matrix to hold sum(H,2) [sum of rows of H]
 
     for(int32_t i = 0; i < max_iter; i++) {
         /* matlab algorithm
@@ -204,7 +204,7 @@ Matrix read_matrix(std::string file, cudaStream_t stream) {
     if(count < size) fprintf(stderr, "read_matrix: fread error\n");
     fclose(fp);
 
-    Matrix A(temp, rows, cols, true);
+    Matrix A(temp, rows, cols);
 
     free(temp);
 

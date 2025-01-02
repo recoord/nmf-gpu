@@ -24,28 +24,24 @@ template <uint32_t blockSize> __global__ void reduce1DNan(float *g_idata1, float
 template <uint32_t blockSize> __global__ void reduce1DEql(float *g_idata1, float *g_odata, int32_t N);
 void grid2D(dim3 *dimGrid);
 
-Matrix::Matrix(uint32_t rows, uint32_t cols, bool add_padding) {
+Matrix::Matrix(uint32_t rows, uint32_t cols) {
     this->rows = rows;
     this->cols = cols;
     this->rows_padded = rows;
     this->cols_padded = cols;
 
-    if(add_padding) {
-        this->add_padding();
-    }
+    this->add_padding();
 
     cudaAssert(cudaMalloc((void **) &(this->data), this->rows_padded * this->cols_padded * sizeof(float)));
 }
 
-Matrix::Matrix(float *host_data, uint32_t rows, uint32_t cols, bool add_padding) {
+Matrix::Matrix(float *host_data, uint32_t rows, uint32_t cols) {
     this->rows = rows;
     this->cols = cols;
     this->rows_padded = rows;
     this->cols_padded = cols;
 
-    if(add_padding) {
-        this->add_padding();
-    }
+    this->add_padding();
 
     uint32_t size = this->rows_padded * this->cols_padded * sizeof(float);
     cudaAssert(cudaMalloc((void **) &(this->data), size));
@@ -56,15 +52,13 @@ Matrix::Matrix(float *host_data, uint32_t rows, uint32_t cols, bool add_padding)
     ));
 }
 
-Matrix::Matrix(float value, uint32_t rows, uint32_t cols, bool add_padding) {
+Matrix::Matrix(float value, uint32_t rows, uint32_t cols) {
     this->rows = rows;
     this->cols = cols;
     this->rows_padded = rows;
     this->cols_padded = cols;
 
-    if(add_padding) {
-        this->add_padding();
-    }
+    this->add_padding();
 
     uint32_t size = this->rows_padded * this->cols_padded * sizeof(float);
     cudaAssert(cudaMalloc((void **) &(this->data), size));
@@ -84,16 +78,6 @@ void Matrix::add_padding() {
     if(this->cols != 1 && this->cols % PAD_MULT != 0) {
         this->cols_padded = this->cols + (PAD_MULT - (this->cols % PAD_MULT));
     }
-}
-
-void Matrix::copy_to_padded(Matrix *padded) {
-    assert(this->rows_padded <= padded->rows_padded);
-    assert(this->cols_padded <= padded->cols_padded);
-
-    cudaAssert(cudaMemcpy2D(
-        padded->data, padded->rows_padded * sizeof(float), this->data, this->rows_padded * sizeof(float),
-        this->rows_padded * sizeof(float), this->cols_padded, cudaMemcpyDeviceToDevice
-    ));
 }
 
 void matrix_multiply_d(Matrix a, Matrix b, Matrix c) {
