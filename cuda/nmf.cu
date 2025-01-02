@@ -16,14 +16,15 @@ void run_async(
 );
 uint32_t nextpow2(uint32_t x);
 Matrix read_matrix(std::string file, cudaStream_t stream);
-void write_matrix(Matrix A_padded, std::string file);
+void write_matrix(Matrix A_padded, std::string file, cudaStream_t stream);
 
 
 int32_t main(int32_t argc, char *argv[]) {
-    cudaStream_t stream = NULL;
+    cudaStream_t stream;
+    cudaAssert(cudaStreamCreate(&stream));
     cublasHandle_t cublas_handle;
-    cublasCreate(&cublas_handle);
-    cublasSetStream(cublas_handle, stream);
+    cudaAssert(cublasCreate(&cublas_handle));
+    cudaAssert(cublasSetStream(cublas_handle, stream));
 
     Matrix X = read_matrix("../X.bin", stream);
     Matrix H = read_matrix("../H.bin", stream);
@@ -34,10 +35,11 @@ int32_t main(int32_t argc, char *argv[]) {
 
     // write results matrices to binary files
     // (can be read with export_bin.m in Matlab)
-    write_matrix(W, "../Wout.bin");
-    write_matrix(H, "../Hout.bin");
+    write_matrix(W, "../Wout.bin", stream);
+    write_matrix(H, "../Hout.bin", stream);
 
-    cublasDestroy(cublas_handle);
+    cudaAssert(cublasDestroy(cublas_handle));
+    cudaAssert(cudaStreamDestroy(stream));
 
     return 0;
 }
@@ -84,11 +86,11 @@ void run_async(
     const uint32_t BLOCK_SIZE = 128;
 
     // initialize temp matrices -----------------------
-    Matrix Z(0.0f, M, N);     // Matrix to hold X./(W*H+EPS)
-    Matrix WtZ(0.0f, K, N);   // Matrix to hold W'*Z
-    Matrix ZHt(0.0f, M, K);   // Matrix to hold Z*H'
-    Matrix sumW(0.0f, 1, K);  // Matrix to hold sum(W) [sum of cols of W]
-    Matrix sumH2(0.0f, K, 1); // Matrix to hold sum(H,2) [sum of rows of H]
+    Matrix Z(0.0f, M, N, stream);     // Matrix to hold X./(W*H+EPS)
+    Matrix WtZ(0.0f, K, N, stream);   // Matrix to hold W'*Z
+    Matrix ZHt(0.0f, M, K, stream);   // Matrix to hold Z*H'
+    Matrix sumW(0.0f, 1, K, stream);  // Matrix to hold sum(W) [sum of cols of W]
+    Matrix sumH2(0.0f, K, 1, stream); // Matrix to hold sum(H,2) [sum of rows of H]
 
     for(uint32_t i = 0; i < max_iter; i++) {
         /* matlab algorithm
@@ -108,10 +110,10 @@ void run_async(
         Z.set_epsilon(BLOCK_SIZE, stream);
 
         // Z = X./WH
-        element_divide(X, Z, Z, BLOCK_SIZE);
+        element_divide(X, Z, Z, BLOCK_SIZE, stream);
 
         // sum cols of W into row vector
-        sum_cols(compute, W, sumW, M_params);
+        sum_cols(compute, W, sumW, M_params, stream);
         sumW.set_epsilon(32, stream);
 
         // convert sumW to col vector (transpose)
@@ -123,10 +125,10 @@ void run_async(
 
         // WtZ = WtZ./(repmat(sum(W)',1,H.cols)
         //[element divide cols of WtZ by sumW']
-        col_divide(WtZ, sumW, WtZ);
+        col_divide(WtZ, sumW, WtZ, stream);
 
         // H = H.*WtZ
-        element_multiply(H, WtZ, H, BLOCK_SIZE);
+        element_multiply(H, WtZ, H, BLOCK_SIZE, stream);
 
         //
         // UPDATE W ---------------------------
@@ -139,10 +141,10 @@ void run_async(
         Z.set_epsilon(BLOCK_SIZE, stream);
 
         // Z = X./WH
-        element_divide(X, Z, Z, BLOCK_SIZE);
+        element_divide(X, Z, Z, BLOCK_SIZE, stream);
 
         // sum rows of H into col vector
-        sum_rows(compute, H, sumH2, N_params);
+        sum_rows(compute, H, sumH2, N_params, stream);
         sumH2.set_epsilon(32, stream);
 
         // convert sumH2 to row vector (transpose)
@@ -154,10 +156,10 @@ void run_async(
 
         // ZHt = ZHt./(repmat(sum(H,2)',W.rows,1)
         //[element divide rows of ZHt by sumH2']
-        row_divide(ZHt, sumH2, ZHt);
+        row_divide(ZHt, sumH2, ZHt, stream);
 
         // W = W.*ZHt
-        element_multiply(W, ZHt, W, BLOCK_SIZE);
+        element_multiply(W, ZHt, W, BLOCK_SIZE, stream);
 
         // reset sumW to row vector
         sumW.cols_padded = sumW.rows_padded;
@@ -168,8 +170,8 @@ void run_async(
     }
 
     // clean up extra reduction memory
-    sum_cols(cleanup, W, sumW, M_params);
-    sum_rows(cleanup, H, sumH2, N_params);
+    sum_cols(cleanup, W, sumW, M_params, stream);
+    sum_rows(cleanup, H, sumH2, N_params, stream);
 }
 
 uint32_t nextpow2(uint32_t x) {
@@ -202,7 +204,7 @@ Matrix read_matrix(std::string file, cudaStream_t stream) {
     if(count < size) fprintf(stderr, "read_matrix: fread error\n");
     fclose(fp);
 
-    Matrix A(temp, rows, cols);
+    Matrix A(temp, rows, cols, stream);
 
     // make sure no zero elements
     A.set_epsilon(128, stream);
@@ -214,7 +216,7 @@ Matrix read_matrix(std::string file, cudaStream_t stream) {
     return A;
 }
 
-void write_matrix(Matrix A_padded, std::string file) {
+void write_matrix(Matrix A_padded, std::string file, cudaStream_t stream) {
     // write Matrix to file using column-major order
     // dimensions are written as leading ints
 
@@ -223,10 +225,11 @@ void write_matrix(Matrix A_padded, std::string file) {
 
     float *temp;
     cudaAssert(cudaMallocHost((void **) &temp, A_padded.rows * A_padded.cols * sizeof(float)));
-    cudaMemcpy2D(
+    cudaAssert(cudaMemcpy2DAsync(
         temp, sizeof(float) * A_padded.rows, A_padded.data, sizeof(float) * A_padded.rows_padded,
-        sizeof(float) * A_padded.rows, A_padded.cols, cudaMemcpyDeviceToHost
-    );
+        sizeof(float) * A_padded.rows, A_padded.cols, cudaMemcpyDeviceToHost, stream
+    ));
+    cudaAssert(cudaStreamSynchronize(stream));
 
     FILE *fp;
     size_t count;
