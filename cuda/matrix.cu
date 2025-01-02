@@ -86,16 +86,6 @@ void Matrix::copy_to_padded(Matrix *padded) {
     ));
 }
 
-void Matrix::copy_from_padded(Matrix *padded) {
-    assert(this->rows <= padded->rows);
-    assert(this->cols <= padded->cols);
-
-    cudaMemcpy2D(
-        this->data, sizeof(float) * this->rows, padded->data, sizeof(float) * padded->rows, sizeof(float) * this->rows,
-        this->cols, cudaMemcpyDeviceToDevice
-    );
-}
-
 void matrix_multiply_d(Matrix a, Matrix b, Matrix c) {
     // TODO: Is this the legacy API?
     cublasSgemm('N', 'N', c.rows, c.cols, a.cols, 1, a.data, a.rows, b.data, b.rows, 0, c.data, c.rows);

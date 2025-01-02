@@ -17,7 +17,6 @@ class Matrix {
     uint32_t cols;
 
     void copy_to_padded(Matrix *padded);
-    void copy_from_padded(Matrix *padded);
 
     Matrix(uint32_t rows, uint32_t cols, bool add_padding);
     Matrix(float *host_data, uint32_t rows, uint32_t cols, bool add_padding);
@@ -26,9 +25,6 @@ class Matrix {
 };
 
 typedef enum { compute, cleanup } action_t;
-
-// creating, allocating, moving matrices
-void copy_from_padded(Matrix A, Matrix Apad);
 
 // Matrix analysis
 float nan_check_d(action_t action, Matrix a, uint32_t *params);
