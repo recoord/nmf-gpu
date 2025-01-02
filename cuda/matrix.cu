@@ -79,31 +79,34 @@ void Matrix::add_padding() {
     }
 }
 
-void matrix_multiply(Matrix a, Matrix b, Matrix c) {
-    // TODO: Is this the legacy API?
-    cublasSgemm(
-        'N', 'N', c.rows_padded, c.cols_padded, a.cols_padded, 1, a.data, a.rows_padded, b.data, b.rows_padded, 0,
-        c.data, c.rows_padded
-    );
-    cudaAssert(cublasGetError());
+void matrix_multiply(Matrix a, Matrix b, Matrix c, cublasHandle_t handle) {
+    float alpha = 1.0f;
+    float beta = 0.0f;
+
+    cudaAssert(cublasSgemm(
+        handle, CUBLAS_OP_N, CUBLAS_OP_N, c.rows_padded, c.cols_padded, a.cols_padded, &alpha, a.data, a.rows_padded,
+        b.data, b.rows_padded, &beta, c.data, c.rows_padded
+    ));
 }
 
-void matrix_multiply_AtB(Matrix a, Matrix b, Matrix c) {
-    // TODO: Is this the legacy API?
-    cublasSgemm(
-        'T', 'N', c.rows_padded, c.cols_padded, b.rows_padded, 1, a.data, a.rows_padded, b.data, b.rows_padded, 0,
-        c.data, c.rows_padded
-    );
-    cudaAssert(cublasGetError());
+void matrix_multiply_AtB(Matrix a, Matrix b, Matrix c, cublasHandle_t handle) {
+    float alpha = 1.0f;
+    float beta = 0.0f;
+
+    cudaAssert(cublasSgemm(
+        handle, CUBLAS_OP_T, CUBLAS_OP_N, c.rows_padded, c.cols_padded, b.rows_padded, &alpha, a.data, a.rows_padded,
+        b.data, b.rows_padded, &beta, c.data, c.rows_padded
+    ));
 }
 
-void matrix_multiply_ABt(Matrix a, Matrix b, Matrix c) {
-    // TODO: Is this the legacy API?
-    cublasSgemm(
-        'N', 'T', c.rows_padded, c.cols_padded, a.cols_padded, 1, a.data, a.rows_padded, b.data, b.rows_padded, 0,
-        c.data, c.rows_padded
-    );
-    cudaAssert(cublasGetError());
+void matrix_multiply_ABt(Matrix a, Matrix b, Matrix c, cublasHandle_t handle) {
+    float alpha = 1.0f;
+    float beta = 0.0f;
+
+    cudaAssert(cublasSgemm(
+        handle, CUBLAS_OP_N, CUBLAS_OP_T, c.rows_padded, c.cols_padded, a.cols_padded, &alpha, a.data, a.rows_padded,
+        b.data, b.rows_padded, &beta, c.data, c.rows_padded
+    ));
 }
 
 void element_divide(Matrix a, Matrix b, Matrix c, uint32_t block_size) {

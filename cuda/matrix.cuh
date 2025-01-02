@@ -1,4 +1,4 @@
-#include <cublas.h>
+#include <cublas_v2.h>
 #include <cuda_runtime_api.h>
 #include <math.h>
 #include <stdint.h>
@@ -29,9 +29,9 @@ class Matrix {
 typedef enum { compute, cleanup } action_t;
 
 // sgemms
-void matrix_multiply(Matrix a, Matrix b, Matrix c);
-void matrix_multiply_AtB(Matrix a, Matrix b, Matrix c);
-void matrix_multiply_ABt(Matrix a, Matrix b, Matrix c);
+void matrix_multiply(Matrix a, Matrix b, Matrix c, cublasHandle_t handle);
+void matrix_multiply_AtB(Matrix a, Matrix b, Matrix c, cublasHandle_t handle);
+void matrix_multiply_ABt(Matrix a, Matrix b, Matrix c, cublasHandle_t handle);
 
 // element operations
 void element_multiply(Matrix a, Matrix b, Matrix c, uint32_t block_size);

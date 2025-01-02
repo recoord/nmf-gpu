@@ -10,8 +10,9 @@
 #define MAX_ITER 200      // max number of iterations
 #define CONVERGE_THRESH 0 // set to zero to guarantee MAX_ITER iterations, 0.001 is a good value otherwise
 
-void update_div(
-    Matrix W, Matrix H, Matrix X, const float thresh, const uint32_t max_iter, int32_t verbose, cudaStream_t stream
+void run_async(
+    Matrix W, Matrix H, Matrix X, const float thresh, const uint32_t max_iter, cublasHandle_t cublas_handle,
+    cudaStream_t stream
 );
 uint32_t nextpow2(uint32_t x);
 Matrix read_matrix(std::string file, cudaStream_t stream);
@@ -20,18 +21,23 @@ void write_matrix(Matrix A_padded, std::string file);
 
 int32_t main(int32_t argc, char *argv[]) {
     cudaStream_t stream = NULL;
+    cublasHandle_t cublas_handle;
+    cublasCreate(&cublas_handle);
+    cublasSetStream(cublas_handle, stream);
 
     Matrix X = read_matrix("../X.bin", stream);
     Matrix H = read_matrix("../H.bin", stream);
     Matrix W = read_matrix("../W.bin", stream);
 
     // iterative nmf minimization
-    update_div(W, H, X, CONVERGE_THRESH, MAX_ITER, 1, stream);
+    run_async(W, H, X, CONVERGE_THRESH, MAX_ITER, cublas_handle, stream);
 
     // write results matrices to binary files
     // (can be read with export_bin.m in Matlab)
     write_matrix(W, "../Wout.bin");
     write_matrix(H, "../Hout.bin");
+
+    cublasDestroy(cublas_handle);
 
     return 0;
 }
@@ -59,11 +65,10 @@ void init_params(uint32_t value, uint32_t *params) {
     params[3] = 1;
 }
 
-void update_div(
-    Matrix W, Matrix H, Matrix X, const float thresh, const uint32_t max_iter, int32_t verbose, cudaStream_t stream
+void run_async(
+    Matrix W, Matrix H, Matrix X, const float thresh, const uint32_t max_iter, cublasHandle_t cublas_handle,
+    cudaStream_t stream
 ) {
-    cublasInit();
-
     const uint32_t M = W.rows;
     const uint32_t K = W.cols;
     const uint32_t N = H.cols;
@@ -97,7 +102,7 @@ void update_div(
         //
 
         // WH = W*H
-        matrix_multiply(W, H, Z);
+        matrix_multiply(W, H, Z, cublas_handle);
 
         // WH = WH+EPS
         Z.set_epsilon(BLOCK_SIZE, stream);
@@ -114,7 +119,7 @@ void update_div(
         sumW.cols_padded = 1;
 
         // WtZ = W'*Z
-        matrix_multiply_AtB(W, Z, WtZ);
+        matrix_multiply_AtB(W, Z, WtZ, cublas_handle);
 
         // WtZ = WtZ./(repmat(sum(W)',1,H.cols)
         //[element divide cols of WtZ by sumW']
@@ -128,7 +133,7 @@ void update_div(
         //
 
         // WH = W*H
-        matrix_multiply(W, H, Z);
+        matrix_multiply(W, H, Z, cublas_handle);
 
         // WH = WH+EPS
         Z.set_epsilon(BLOCK_SIZE, stream);
@@ -145,7 +150,7 @@ void update_div(
         sumH2.rows_padded = 1;
 
         // ZHt = Z*H'
-        matrix_multiply_ABt(Z, H, ZHt);
+        matrix_multiply_ABt(Z, H, ZHt, cublas_handle);
 
         // ZHt = ZHt./(repmat(sum(H,2)',W.rows,1)
         //[element divide rows of ZHt by sumH2']
@@ -165,8 +170,6 @@ void update_div(
     // clean up extra reduction memory
     sum_cols(cleanup, W, sumW, M_params);
     sum_rows(cleanup, H, sumH2, N_params);
-
-    cublasShutdown();
 }
 
 uint32_t nextpow2(uint32_t x) {
