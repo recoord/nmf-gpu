@@ -11,7 +11,7 @@
 #define CONVERGE_THRESH 0 // set to zero to guarantee MAX_ITER iterations, 0.001 is a good value otherwise
 
 void update_div(
-    Matrix W, Matrix H, Matrix X, const float thresh, const int32_t max_iter, int32_t verbose, cudaStream_t stream
+    Matrix W, Matrix H, Matrix X, const float thresh, const uint32_t max_iter, int32_t verbose, cudaStream_t stream
 );
 uint32_t nextpow2(uint32_t x);
 Matrix read_matrix(std::string file, cudaStream_t stream);
@@ -24,11 +24,6 @@ int32_t main(int32_t argc, char *argv[]) {
     Matrix X = read_matrix("../X.bin", stream);
     Matrix H = read_matrix("../H.bin", stream);
     Matrix W = read_matrix("../W.bin", stream);
-
-    // make sure no zero elements
-    X.set_epsilon(128, stream);
-    H.set_epsilon(128, stream);
-    W.set_epsilon(128, stream);
 
     // iterative nmf minimization
     update_div(W, H, X, CONVERGE_THRESH, MAX_ITER, 1, stream);
@@ -65,7 +60,7 @@ void init_params(uint32_t value, uint32_t *params) {
 }
 
 void update_div(
-    Matrix W, Matrix H, Matrix X, const float thresh, const int32_t max_iter, int32_t verbose, cudaStream_t stream
+    Matrix W, Matrix H, Matrix X, const float thresh, const uint32_t max_iter, int32_t verbose, cudaStream_t stream
 ) {
     cublasInit();
 
@@ -81,7 +76,7 @@ void update_div(
     init_params(M, M_params);
 
     // block size in vector arithmetic operations
-    const int32_t BLOCK_SIZE = 128;
+    const uint32_t BLOCK_SIZE = 128;
 
     // initialize temp matrices -----------------------
     Matrix Z(0.0f, M, N);     // Matrix to hold X./(W*H+EPS)
@@ -90,7 +85,7 @@ void update_div(
     Matrix sumW(0.0f, 1, K);  // Matrix to hold sum(W) [sum of cols of W]
     Matrix sumH2(0.0f, K, 1); // Matrix to hold sum(H,2) [sum of rows of H]
 
-    for(int32_t i = 0; i < max_iter; i++) {
+    for(uint32_t i = 0; i < max_iter; i++) {
         /* matlab algorithm
            Z = X./(W*H+eps); H = H.*(W'*Z)./(repmat(sum(W)',1,F));
            Z = X./(W*H+eps);
@@ -205,6 +200,9 @@ Matrix read_matrix(std::string file, cudaStream_t stream) {
     fclose(fp);
 
     Matrix A(temp, rows, cols);
+
+    // make sure no zero elements
+    A.set_epsilon(128, stream);
 
     free(temp);
 
