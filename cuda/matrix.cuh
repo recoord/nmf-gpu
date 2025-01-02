@@ -18,6 +18,8 @@ class Matrix {
     uint32_t rows_padded;
     uint32_t cols_padded;
 
+    void set_epsilon(uint32_t block_size, cudaStream_t stream);
+
     Matrix(uint32_t rows, uint32_t cols);
     Matrix(float *host_data, uint32_t rows, uint32_t cols);
     Matrix(float value, uint32_t rows, uint32_t cols);
@@ -26,23 +28,17 @@ class Matrix {
 
 typedef enum { compute, cleanup } action_t;
 
-// Matrix analysis
-float nan_check_d(action_t action, Matrix a, uint32_t *params);
-float zero_check_d(action_t action, Matrix a, uint32_t *params);
-float zero_check(Matrix a);
-
 // sgemms
-void matrix_multiply_d(Matrix a, Matrix b, Matrix c);
-void matrix_multiply_AtB_d(Matrix a, Matrix b, Matrix c);
-void matrix_multiply_ABt_d(Matrix a, Matrix b, Matrix c);
+void matrix_multiply(Matrix a, Matrix b, Matrix c);
+void matrix_multiply_AtB(Matrix a, Matrix b, Matrix c);
+void matrix_multiply_ABt(Matrix a, Matrix b, Matrix c);
 
 // element operations
-void element_multiply_d(Matrix a, Matrix b, Matrix c, uint32_t block_size);
-void element_divide_d(Matrix a, Matrix b, Matrix c, uint32_t block_size);
-void matrix_eps_d(Matrix a, uint32_t block_size, cudaStream_t stream);
+void element_multiply(Matrix a, Matrix b, Matrix c, uint32_t block_size);
+void element_divide(Matrix a, Matrix b, Matrix c, uint32_t block_size);
 
 // row/col-wise
-void row_divide_d(Matrix a, Matrix b, Matrix c);
-void col_divide_d(Matrix a, Matrix b, Matrix c);
-void sum_cols_d(action_t action, Matrix a, Matrix c, uint32_t *params);
-void sum_rows_d(action_t action, Matrix a, Matrix c, uint32_t *params);
+void row_divide(Matrix a, Matrix b, Matrix c);
+void col_divide(Matrix a, Matrix b, Matrix c);
+void sum_cols(action_t action, Matrix a, Matrix c, uint32_t *params);
+void sum_rows(action_t action, Matrix a, Matrix c, uint32_t *params);

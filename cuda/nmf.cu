@@ -26,9 +26,9 @@ int32_t main(int32_t argc, char *argv[]) {
     Matrix W = read_matrix("../W.bin", stream);
 
     // make sure no zero elements
-    matrix_eps_d(X, 128, stream);
-    matrix_eps_d(H, 128, stream);
-    matrix_eps_d(W, 128, stream);
+    X.set_epsilon(128, stream);
+    H.set_epsilon(128, stream);
+    W.set_epsilon(128, stream);
 
     // iterative nmf minimization
     update_div(W, H, X, CONVERGE_THRESH, MAX_ITER, 1, stream);
@@ -102,62 +102,62 @@ void update_div(
         //
 
         // WH = W*H
-        matrix_multiply_d(W, H, Z);
+        matrix_multiply(W, H, Z);
 
         // WH = WH+EPS
-        matrix_eps_d(Z, BLOCK_SIZE, stream);
+        Z.set_epsilon(BLOCK_SIZE, stream);
 
         // Z = X./WH
-        element_divide_d(X, Z, Z, BLOCK_SIZE);
+        element_divide(X, Z, Z, BLOCK_SIZE);
 
         // sum cols of W into row vector
-        sum_cols_d(compute, W, sumW, M_params);
-        matrix_eps_d(sumW, 32, stream);
+        sum_cols(compute, W, sumW, M_params);
+        sumW.set_epsilon(32, stream);
 
         // convert sumW to col vector (transpose)
         sumW.rows_padded = sumW.cols_padded;
         sumW.cols_padded = 1;
 
         // WtZ = W'*Z
-        matrix_multiply_AtB_d(W, Z, WtZ);
+        matrix_multiply_AtB(W, Z, WtZ);
 
         // WtZ = WtZ./(repmat(sum(W)',1,H.cols)
         //[element divide cols of WtZ by sumW']
-        col_divide_d(WtZ, sumW, WtZ);
+        col_divide(WtZ, sumW, WtZ);
 
         // H = H.*WtZ
-        element_multiply_d(H, WtZ, H, BLOCK_SIZE);
+        element_multiply(H, WtZ, H, BLOCK_SIZE);
 
         //
         // UPDATE W ---------------------------
         //
 
         // WH = W*H
-        matrix_multiply_d(W, H, Z);
+        matrix_multiply(W, H, Z);
 
         // WH = WH+EPS
-        matrix_eps_d(Z, BLOCK_SIZE, stream);
+        Z.set_epsilon(BLOCK_SIZE, stream);
 
         // Z = X./WH
-        element_divide_d(X, Z, Z, BLOCK_SIZE);
+        element_divide(X, Z, Z, BLOCK_SIZE);
 
         // sum rows of H into col vector
-        sum_rows_d(compute, H, sumH2, N_params);
-        matrix_eps_d(sumH2, 32, stream);
+        sum_rows(compute, H, sumH2, N_params);
+        sumH2.set_epsilon(32, stream);
 
         // convert sumH2 to row vector (transpose)
         sumH2.cols_padded = sumH2.rows_padded;
         sumH2.rows_padded = 1;
 
         // ZHt = Z*H'
-        matrix_multiply_ABt_d(Z, H, ZHt);
+        matrix_multiply_ABt(Z, H, ZHt);
 
         // ZHt = ZHt./(repmat(sum(H,2)',W.rows,1)
         //[element divide rows of ZHt by sumH2']
-        row_divide_d(ZHt, sumH2, ZHt);
+        row_divide(ZHt, sumH2, ZHt);
 
         // W = W.*ZHt
-        element_multiply_d(W, ZHt, W, BLOCK_SIZE);
+        element_multiply(W, ZHt, W, BLOCK_SIZE);
 
         // reset sumW to row vector
         sumW.cols_padded = sumW.rows_padded;
@@ -168,8 +168,8 @@ void update_div(
     }
 
     // clean up extra reduction memory
-    sum_cols_d(cleanup, W, sumW, M_params);
-    sum_rows_d(cleanup, H, sumH2, N_params);
+    sum_cols(cleanup, W, sumW, M_params);
+    sum_rows(cleanup, H, sumH2, N_params);
 
     cublasShutdown();
 }
