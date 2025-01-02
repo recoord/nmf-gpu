@@ -27,23 +27,27 @@ void grid2D(dim3 *dimGrid);
 Matrix::Matrix(uint32_t rows, uint32_t cols, bool add_padding) {
     this->rows = rows;
     this->cols = cols;
+    this->rows_padded = rows;
+    this->cols_padded = cols;
 
     if(add_padding) {
         this->add_padding();
     }
 
-    cudaAssert(cudaMalloc((void **) &(this->data), rows * cols * sizeof(float)));
+    cudaAssert(cudaMalloc((void **) &(this->data), this->rows_padded * this->cols_padded * sizeof(float)));
 }
 
 Matrix::Matrix(float *host_data, uint32_t rows, uint32_t cols, bool add_padding) {
     this->rows = rows;
     this->cols = cols;
+    this->rows_padded = rows;
+    this->cols_padded = cols;
 
     if(add_padding) {
         this->add_padding();
     }
 
-    uint32_t size = rows * cols * sizeof(float);
+    uint32_t size = this->rows_padded * this->cols_padded * sizeof(float);
     cudaAssert(cudaMalloc((void **) &(this->data), size));
     cudaAssert(cudaMemcpy(this->data, host_data, size, cudaMemcpyHostToDevice));
 }
@@ -51,12 +55,14 @@ Matrix::Matrix(float *host_data, uint32_t rows, uint32_t cols, bool add_padding)
 Matrix::Matrix(float value, uint32_t rows, uint32_t cols, bool add_padding) {
     this->rows = rows;
     this->cols = cols;
+    this->rows_padded = rows;
+    this->cols_padded = cols;
 
     if(add_padding) {
         this->add_padding();
     }
 
-    uint32_t size = this->rows * this->cols * sizeof(float);
+    uint32_t size = this->rows_padded * this->cols_padded * sizeof(float);
     cudaAssert(cudaMalloc((void **) &(this->data), size));
     cudaAssert(cudaMemset(this->data, value, size));
 }
@@ -69,50 +75,60 @@ Matrix::~Matrix() {
 
 void Matrix::add_padding() {
     if(this->rows != 1 && this->rows % PAD_MULT != 0) {
-        this->rows = this->rows + (PAD_MULT - (this->rows % PAD_MULT));
+        this->rows_padded = this->rows + (PAD_MULT - (this->rows % PAD_MULT));
     }
     if(this->cols != 1 && this->cols % PAD_MULT != 0) {
-        this->cols = this->cols + (PAD_MULT - (this->cols % PAD_MULT));
+        this->cols_padded = this->cols + (PAD_MULT - (this->cols % PAD_MULT));
     }
 }
 
 void Matrix::copy_to_padded(Matrix *padded) {
-    assert(this->rows <= padded->rows);
-    assert(this->cols <= padded->cols);
+    assert(this->rows_padded <= padded->rows_padded);
+    assert(this->cols_padded <= padded->cols_padded);
 
     cudaAssert(cudaMemcpy2D(
-        padded->data, padded->rows * sizeof(float), this->data, this->rows * sizeof(float), this->rows * sizeof(float),
-        this->cols, cudaMemcpyDeviceToDevice
+        padded->data, padded->rows_padded * sizeof(float), this->data, this->rows_padded * sizeof(float),
+        this->rows_padded * sizeof(float), this->cols_padded, cudaMemcpyDeviceToDevice
     ));
 }
 
 void matrix_multiply_d(Matrix a, Matrix b, Matrix c) {
     // TODO: Is this the legacy API?
-    cublasSgemm('N', 'N', c.rows, c.cols, a.cols, 1, a.data, a.rows, b.data, b.rows, 0, c.data, c.rows);
+    cublasSgemm(
+        'N', 'N', c.rows_padded, c.cols_padded, a.cols_padded, 1, a.data, a.rows_padded, b.data, b.rows_padded, 0,
+        c.data, c.rows_padded
+    );
     cudaAssert(cublasGetError());
 }
 
 void matrix_multiply_AtB_d(Matrix a, Matrix b, Matrix c) {
     // TODO: Is this the legacy API?
-    cublasSgemm('T', 'N', c.rows, c.cols, b.rows, 1, a.data, a.rows, b.data, b.rows, 0, c.data, c.rows);
+    cublasSgemm(
+        'T', 'N', c.rows_padded, c.cols_padded, b.rows_padded, 1, a.data, a.rows_padded, b.data, b.rows_padded, 0,
+        c.data, c.rows_padded
+    );
     cudaAssert(cublasGetError());
 }
 
 void matrix_multiply_ABt_d(Matrix a, Matrix b, Matrix c) {
     // TODO: Is this the legacy API?
-    cublasSgemm('N', 'T', c.rows, c.cols, a.cols, 1, a.data, a.rows, b.data, b.rows, 0, c.data, c.rows);
+    cublasSgemm(
+        'N', 'T', c.rows_padded, c.cols_padded, a.cols_padded, 1, a.data, a.rows_padded, b.data, b.rows_padded, 0,
+        c.data, c.rows_padded
+    );
     cudaAssert(cublasGetError());
 }
 
 void element_divide_d(Matrix a, Matrix b, Matrix c, uint32_t block_size) {
     // c = a./b
 
-    if(a.rows != b.rows || a.rows != c.rows || a.cols != b.cols || a.cols != c.cols) {
+    if(a.rows_padded != b.rows_padded || a.rows_padded != c.rows_padded || a.cols_padded != b.cols_padded ||
+       a.cols_padded != c.cols_padded) {
         fprintf(stderr, "element_divide_d: dimensions do not agree\n");
         exit(1);
     }
 
-    const int32_t N = a.rows * a.cols;
+    const int32_t N = a.rows_padded * a.cols_padded;
     dim3 dimBlock(block_size);
     dim3 dimGrid((N / dimBlock.x) + (!(N % dimBlock.x) ? 0 : 1));
     if(dimGrid.x > MAX_BLOCKS) grid2D(&dimGrid);
@@ -130,12 +146,13 @@ __global__ void vecDiv(float *a, float *b, float *c, const int32_t N) {
 void element_multiply_d(Matrix a, Matrix b, Matrix c, uint32_t block_size) {
     // c = a./b
 
-    if(a.rows != b.rows || a.rows != c.rows || a.cols != b.cols || a.cols != c.cols) {
+    if(a.rows_padded != b.rows_padded || a.rows_padded != c.rows_padded || a.cols_padded != b.cols_padded ||
+       a.cols_padded != c.cols_padded) {
         fprintf(stderr, "element_multiply_d: dimensions do not agree\n");
         exit(1);
     }
 
-    const int32_t N = a.rows * a.cols;
+    const int32_t N = a.rows_padded * a.cols_padded;
     dim3 dimBlock(block_size);
     dim3 dimGrid((N / dimBlock.x) + (!(N % dimBlock.x) ? 0 : 1));
 
@@ -158,7 +175,7 @@ __global__ void vecEps(float *a, const int32_t N) {
 
 void matrix_eps_d(Matrix a, uint32_t block_size, cudaStream_t stream) {
 
-    const int32_t N = a.rows * a.cols;
+    const int32_t N = a.rows_padded * a.cols_padded;
 
     dim3 dimBlock(block_size);
     dim3 dimGrid((N / dimBlock.x) + (!(N % dimBlock.x) ? 0 : 1));
@@ -171,12 +188,13 @@ void matrix_eps_d(Matrix a, uint32_t block_size, cudaStream_t stream) {
 void row_divide_d(Matrix a, Matrix b, Matrix c) {
     // element divide every row of 'a' by row vector 'b'
 
-    if(a.cols != b.cols || a.rows != c.rows || a.cols != c.cols || b.rows != 1) {
+    if(a.cols_padded != b.cols_padded || a.rows_padded != c.rows_padded || a.cols_padded != c.cols_padded ||
+       b.rows_padded != 1) {
         fprintf(stderr, "row_divide_d: dimension error\n");
         exit(1);
     }
-    int32_t M = a.rows; // number of rows
-    int32_t N = a.cols; // number of cols
+    int32_t M = a.rows_padded; // number of rows
+    int32_t N = a.cols_padded; // number of cols
 
     dim3 dimBlock(M);
     dim3 dimGrid(N);
@@ -192,12 +210,13 @@ __global__ void rowDiv(float *a, float *b, float *c, int32_t M, int32_t N) {
 void col_divide_d(Matrix a, Matrix b, Matrix c) {
     // element divide every column of 'a' by column vector 'b'
 
-    if(a.rows != b.rows || a.rows != c.rows || a.cols != c.cols || b.cols != 1) {
+    if(a.rows_padded != b.rows_padded || a.rows_padded != c.rows_padded || a.cols_padded != c.cols_padded ||
+       b.cols_padded != 1) {
         fprintf(stderr, "col_divide: dimension error\n");
         exit(1);
     }
-    int32_t M = a.rows; // number of rows
-    int32_t N = a.cols; // number of cols
+    int32_t M = a.rows_padded; // number of rows
+    int32_t N = a.cols_padded; // number of cols
     int32_t block = 32;
 
     dim3 dimBlock(block, 1);
@@ -245,13 +264,13 @@ void sum_cols_d(action_t action, Matrix a, Matrix c, uint32_t *params) {
         return;
     }
 
-    if(a.cols != c.cols || c.rows != 1) {
+    if(a.cols_padded != c.cols_padded || c.rows_padded != 1) {
         fprintf(stderr, "sum_cols_d: dimension error\n");
         exit(1);
     }
 
-    const int32_t N = a.rows; // size of each reduction
-    const int32_t M = a.cols; // number of reductions
+    const int32_t N = a.rows_padded; // size of each reduction
+    const int32_t M = a.cols_padded; // number of reductions
 
     dim3 dimBlock(block1, 1);
     dim3 dimGrid((N / (block1 * lapt1)) + (!(N % (block1 * lapt1)) ? 0 : 1), M);
@@ -373,13 +392,13 @@ void sum_rows_d(action_t action, Matrix a, Matrix c, uint32_t *params) {
         r1size = 0;
         return;
     }
-    if(a.rows != c.rows || c.cols != 1) {
+    if(a.rows_padded != c.rows_padded || c.cols_padded != 1) {
         fprintf(stderr, "sum_rows_d: dimension error\n");
         exit(1);
     }
 
-    const int32_t N = a.cols; // size of each reduction
-    const int32_t M = a.rows; // number of reductions
+    const int32_t N = a.cols_padded; // size of each reduction
+    const int32_t M = a.rows_padded; // number of reductions
 
     dim3 dimBlock(block1, 1);
     dim3 dimGrid((N / (block1 * lapt1)) + (!(N % (block1 * lapt1)) ? 0 : 1), M);
@@ -508,7 +527,7 @@ float nan_check_d(action_t action, Matrix a, uint32_t *params) {
     }
 
 
-    const int32_t N = a.rows * a.cols; // size of each reduction
+    const int32_t N = a.rows_padded * a.cols_padded; // size of each reduction
 
     dim3 dimBlock(block1);
     dim3 dimGrid((N / (block1 * lapt1)) + (!(N % (block1 * lapt1)) ? 0 : 1));
@@ -639,7 +658,7 @@ float zero_check_d(action_t action, Matrix a, uint32_t *params) {
     }
 
 
-    const int32_t N = a.rows * a.cols; // size of each reduction
+    const int32_t N = a.rows_padded * a.cols_padded; // size of each reduction
 
     dim3 dimBlock(block1);
     dim3 dimGrid((N / (block1 * lapt1)) + (!(N % (block1 * lapt1)) ? 0 : 1));

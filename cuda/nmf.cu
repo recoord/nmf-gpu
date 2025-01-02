@@ -22,14 +22,9 @@ void write_matrix(Matrix A_padded, uint32_t rows, uint32_t cols, std::string fil
 int32_t main(int32_t argc, char *argv[]) {
     cudaStream_t stream = NULL;
 
-    Matrix W0 = read_matrix("../W.bin", stream);
     Matrix X0 = read_matrix("../X.bin", stream);
     Matrix H0 = read_matrix("../H.bin", stream);
-
-    // make sure no zero elements
-    matrix_eps_d(X0, 128, stream);
-    matrix_eps_d(H0, 128, stream);
-    matrix_eps_d(W0, 128, stream);
+    Matrix W0 = read_matrix("../W.bin", stream);
 
     const uint32_t M = W0.rows;
     const uint32_t K = W0.cols;
@@ -40,9 +35,14 @@ int32_t main(int32_t argc, char *argv[]) {
     Matrix H(0.0f, K, N, true);
     Matrix X(0.0f, M, N, true);
 
-    W0.copy_to_padded(&W);
-    H0.copy_to_padded(&H);
     X0.copy_to_padded(&X);
+    H0.copy_to_padded(&H);
+    W0.copy_to_padded(&W);
+
+    // make sure no zero elements
+    matrix_eps_d(X0, 128, stream);
+    matrix_eps_d(H0, 128, stream);
+    matrix_eps_d(W0, 128, stream);
 
     // iterative nmf minimization
     update_div(W, H, X, M, K, N, CONVERGE_THRESH, MAX_ITER, 1, stream);
@@ -128,8 +128,8 @@ void update_div(
         matrix_eps_d(sumW, 32, stream);
 
         // convert sumW to col vector (transpose)
-        sumW.rows = sumW.cols;
-        sumW.cols = 1;
+        sumW.rows_padded = sumW.cols_padded;
+        sumW.cols_padded = 1;
 
         // WtZ = W'*Z
         matrix_multiply_AtB_d(W, Z, WtZ);
@@ -159,8 +159,8 @@ void update_div(
         matrix_eps_d(sumH2, 32, stream);
 
         // convert sumH2 to row vector (transpose)
-        sumH2.cols = sumH2.rows;
-        sumH2.rows = 1;
+        sumH2.cols_padded = sumH2.rows_padded;
+        sumH2.rows_padded = 1;
 
         // ZHt = Z*H'
         matrix_multiply_ABt_d(Z, H, ZHt);
@@ -173,11 +173,11 @@ void update_div(
         element_multiply_d(W, ZHt, W, BLOCK_SIZE);
 
         // reset sumW to row vector
-        sumW.cols = sumW.rows;
-        sumW.rows = 1;
+        sumW.cols_padded = sumW.rows_padded;
+        sumW.rows_padded = 1;
         // reset sumH2 to col vector
-        sumH2.rows = sumH2.cols;
-        sumH2.cols = 1;
+        sumH2.rows_padded = sumH2.cols_padded;
+        sumH2.cols_padded = 1;
     }
 
     // clean up extra reduction memory
@@ -221,7 +221,7 @@ Matrix read_matrix(std::string file, cudaStream_t stream) {
 
     free(temp);
 
-    printf("read %s [%ix%i]\n", file.c_str(), A.rows, A.cols);
+    printf("read %s [%ix%i]\n", file.c_str(), A.rows_padded, A.cols_padded);
 
     return A;
 }
@@ -230,13 +230,13 @@ void write_matrix(Matrix A_padded, uint32_t rows, uint32_t cols, std::string fil
     // write Matrix to file using column-major order
     // dimensions are written as leading ints
 
-    assert(rows <= A_padded.rows);
-    assert(cols <= A_padded.cols);
+    assert(rows <= A_padded.rows_padded);
+    assert(cols <= A_padded.cols_padded);
 
     float *temp;
     cudaAssert(cudaMallocHost((void **) &temp, rows * cols * sizeof(float)));
     cudaMemcpy2D(
-        temp, sizeof(float) * rows, A_padded.data, sizeof(float) * A_padded.rows, sizeof(float) * rows, cols,
+        temp, sizeof(float) * rows, A_padded.data, sizeof(float) * A_padded.rows_padded, sizeof(float) * rows, cols,
         cudaMemcpyDeviceToHost
     );
 

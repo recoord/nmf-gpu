@@ -15,6 +15,8 @@ class Matrix {
     float *data = nullptr;
     uint32_t rows;
     uint32_t cols;
+    uint32_t rows_padded;
+    uint32_t cols_padded;
 
     void copy_to_padded(Matrix *padded);
 
