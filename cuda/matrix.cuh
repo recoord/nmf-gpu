@@ -6,6 +6,15 @@
 
 #define PAD_MULT 32
 
+class Memory {
+    public:
+    float *data = nullptr;
+    uint32_t size = 0;
+
+    Memory(uint32_t size);
+    ~Memory();
+};
+
 class Matrix {
     private:
     void add_padding();
@@ -20,8 +29,8 @@ class Matrix {
     uint32_t cols_padded;
 
     void set_epsilon(uint32_t block_size, cudaStream_t stream);
-    void sum_cols(Matrix *output, uint32_t *params, cudaStream_t stream);
-    void sum_rows(Matrix *output, uint32_t *params, cudaStream_t stream);
+    void sum_cols(Matrix *output, Memory *aux, uint32_t *params, cudaStream_t stream);
+    void sum_rows(Matrix *output, Memory *aux, uint32_t *params, cudaStream_t stream);
 
     Matrix(uint32_t rows, uint32_t cols);
     Matrix(float *host_data, uint32_t rows, uint32_t cols, cudaStream_t stream);

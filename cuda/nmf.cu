@@ -82,6 +82,8 @@ void run_async(
     init_params(N, N_params);
     init_params(M, M_params);
 
+    Memory aux_memory(512); // auxiliary memory for summing rows/cols. The size should be dynamically allocated
+
     // block size in vector arithmetic operations
     const uint32_t BLOCK_SIZE = 128;
 
@@ -113,7 +115,7 @@ void run_async(
         element_divide(X, &Z, &Z, BLOCK_SIZE, stream);
 
         // sum cols of W into row vector
-        W->sum_cols(&sumW, M_params, stream);
+        W->sum_cols(&sumW, &aux_memory, M_params, stream);
         sumW.set_epsilon(32, stream);
 
         // convert sumW to col vector (transpose)
@@ -144,7 +146,7 @@ void run_async(
         element_divide(X, &Z, &Z, BLOCK_SIZE, stream);
 
         // sum rows of H into col vector
-        H->sum_rows(&sumH2, N_params, stream);
+        H->sum_rows(&sumH2, &aux_memory, N_params, stream);
         sumH2.set_epsilon(32, stream);
 
         // convert sumH2 to row vector (transpose)
