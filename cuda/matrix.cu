@@ -7,22 +7,23 @@
 #include "error-check.hpp"
 #include "matrix.cuh"
 
-#define EPS (float) (2.2204E-16)
+#define EPS ((float) (2.2204E-16))
 #define MAX_BLOCKS 65535
 
 __global__ void kernel_set_epsilon(float *a, const uint32_t N);
-__global__ void vecDiv(float *a, float *b, float *c, const uint32_t N);
-__global__ void vecMult(float *a, float *b, float *c, const uint32_t N);
-__global__ void colDiv(float *a, float *b, float *c, uint32_t M, uint32_t N);
-__global__ void colMul(float *a, float *b, float *c, uint32_t M, uint32_t N);
-__global__ void rowDiv(float *a, float *b, float *c, uint32_t M, uint32_t N);
-template <uint32_t blockSize> __global__ void reduce2D(float *g_idata, float *g_odata, uint32_t N);
+__global__ void vec_div(float *a, float *b, float *c, const uint32_t N);
+__global__ void vec_mul(float *a, float *b, float *c, const uint32_t N);
+__global__ void col_div(float *a, float *b, float *c, uint32_t M, uint32_t N);
+__global__ void col_mul(float *a, float *b, float *c, uint32_t M, uint32_t N);
+__global__ void row_div(float *a, float *b, float *c, uint32_t M, uint32_t N);
+template <uint32_t blockSize> __global__ void reduce2d(float *g_idata, float *g_odata, uint32_t N);
 template <uint32_t blockSize>
-__global__ void reduce2DStrided(float *g_idata, float *g_odata, uint32_t N, uint32_t stride);
+__global__ void reduce2d_strided(float *g_idata, float *g_odata, uint32_t N, uint32_t stride);
 template <uint32_t blockSize>
-__global__ void reduce1DDiff(float *g_idata1, float *g_idata2, float *g_odata, uint32_t N);
-template <uint32_t blockSize> __global__ void reduce1DDiv(float *g_idata1, float *g_idata2, float *g_odata, uint32_t N);
-void grid2D(dim3 *dimGrid);
+__global__ void reduce1d_diff(float *g_idata1, float *g_idata2, float *g_odata, uint32_t N);
+template <uint32_t blockSize>
+__global__ void reduce1d_div(float *g_idata1, float *g_idata2, float *g_odata, uint32_t N);
+void grid2d(dim3 *grid);
 
 
 Memory::Memory(uint32_t size) {
@@ -37,7 +38,6 @@ Memory::~Memory() {
         this->size = 0;
     }
 }
-
 
 Matrix::Matrix(uint32_t rows, uint32_t cols) {
     this->rows = rows;
@@ -124,7 +124,7 @@ void matrix_multiply_ABt(Matrix *a, Matrix *b, Matrix *c, cublasHandle_t handle)
     ));
 }
 
-void element_divide(Matrix *a, Matrix *b, Matrix *c, uint32_t block_size, cudaStream_t stream) {
+void element_divide(Matrix *a, Matrix *b, Matrix *c, uint32_t tile, cudaStream_t stream) {
     // c = a->/b
 
     if(a->rows_padded != b->rows_padded || a->rows_padded != c->rows_padded || a->cols_padded != b->cols_padded ||
@@ -134,16 +134,16 @@ void element_divide(Matrix *a, Matrix *b, Matrix *c, uint32_t block_size, cudaSt
     }
 
     const int32_t N = a->rows_padded * a->cols_padded;
-    dim3 dimBlock(block_size);
-    dim3 dimGrid((N / dimBlock.x) + (!(N % dimBlock.x) ? 0 : 1));
-    if(dimGrid.x > MAX_BLOCKS) {
-        grid2D(&dimGrid);
+    dim3 block(tile);
+    dim3 grid((N / block.x) + (!(N % block.x) ? 0 : 1));
+    if(grid.x > MAX_BLOCKS) {
+        grid2d(&grid);
     }
 
-    vecDiv<<<dimGrid, dimBlock, 0, stream>>>(a->data, b->data, c->data, N);
+    vec_div<<<grid, block, 0, stream>>>(a->data, b->data, c->data, N);
 }
 
-__global__ void vecDiv(float *a, float *b, float *c, const uint32_t N) {
+__global__ void vec_div(float *a, float *b, float *c, const uint32_t N) {
     const uint32_t i = gridDim.x * blockDim.x * blockIdx.y + blockIdx.x * blockDim.x + threadIdx.x;
     if(i < N) {
         c[i] = a[i] / b[i];
@@ -151,7 +151,7 @@ __global__ void vecDiv(float *a, float *b, float *c, const uint32_t N) {
     }
 }
 
-void element_multiply(Matrix *a, Matrix *b, Matrix *c, uint32_t block_size, cudaStream_t stream) {
+void element_multiply(Matrix *a, Matrix *b, Matrix *c, uint32_t tile, cudaStream_t stream) {
     // c = a->/b
 
     if(a->rows_padded != b->rows_padded || a->rows_padded != c->rows_padded || a->cols_padded != b->cols_padded ||
@@ -161,17 +161,17 @@ void element_multiply(Matrix *a, Matrix *b, Matrix *c, uint32_t block_size, cuda
     }
 
     const int32_t N = a->rows_padded * a->cols_padded;
-    dim3 dimBlock(block_size);
-    dim3 dimGrid((N / dimBlock.x) + (!(N % dimBlock.x) ? 0 : 1));
+    dim3 block(tile);
+    dim3 grid((N / block.x) + (!(N % block.x) ? 0 : 1));
 
-    if(dimGrid.x > MAX_BLOCKS) {
-        grid2D(&dimGrid);
+    if(grid.x > MAX_BLOCKS) {
+        grid2d(&grid);
     }
 
-    vecMult<<<dimGrid, dimBlock, 0, stream>>>(a->data, b->data, c->data, N);
+    vec_mul<<<grid, block, 0, stream>>>(a->data, b->data, c->data, N);
 }
 
-__global__ void vecMult(float *a, float *b, float *c, const uint32_t N) {
+__global__ void vec_mul(float *a, float *b, float *c, const uint32_t N) {
     const uint32_t i = gridDim.x * blockDim.x * blockIdx.y + blockIdx.x * blockDim.x + threadIdx.x;
 
     if(i < N) {
@@ -187,17 +187,17 @@ __global__ void kernel_set_epsilon(float *a, const uint32_t N) {
     }
 }
 
-void Matrix::set_epsilon(uint32_t block_size, cudaStream_t stream) {
+void Matrix::set_epsilon(uint32_t tile, cudaStream_t stream) {
     uint32_t size = this->rows_padded * this->cols_padded;
 
-    dim3 dimBlock(block_size);
-    dim3 dimGrid((size / dimBlock.x) + (!(size % dimBlock.x) ? 0 : 1));
+    dim3 block(tile);
+    dim3 grid((size / block.x) + (!(size % block.x) ? 0 : 1));
 
-    if(dimGrid.x > MAX_BLOCKS) {
-        grid2D(&dimGrid);
+    if(grid.x > MAX_BLOCKS) {
+        grid2d(&grid);
     }
 
-    kernel_set_epsilon<<<dimGrid, dimBlock, 0, stream>>>(this->data, size);
+    kernel_set_epsilon<<<grid, block, 0, stream>>>(this->data, size);
 }
 
 void row_divide(Matrix *a, Matrix *b, Matrix *c, cudaStream_t stream) {
@@ -212,12 +212,12 @@ void row_divide(Matrix *a, Matrix *b, Matrix *c, cudaStream_t stream) {
     uint32_t M = a->rows_padded; // number of rows
     uint32_t N = a->cols_padded; // number of cols
 
-    dim3 dimBlock(M);
-    dim3 dimGrid(N);
-    rowDiv<<<dimGrid, dimBlock, 0, stream>>>(a->data, b->data, c->data, M, N);
+    dim3 block(M);
+    dim3 grid(N);
+    row_div<<<grid, block, 0, stream>>>(a->data, b->data, c->data, M, N);
 }
 
-__global__ void rowDiv(float *a, float *b, float *c, uint32_t M, uint32_t N) {
+__global__ void row_div(float *a, float *b, float *c, uint32_t M, uint32_t N) {
 
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     c[i] = a[i] / b[blockIdx.x];
@@ -234,14 +234,14 @@ void col_divide(Matrix *a, Matrix *b, Matrix *c, cudaStream_t stream) {
 
     uint32_t M = a->rows_padded; // number of rows
     uint32_t N = a->cols_padded; // number of cols
-    uint32_t block = 32;
+    uint32_t tile = 32;
 
-    dim3 dimBlock(block, 1);
-    dim3 dimGrid((M / block) + (!(M % block) ? 0 : 1), N);
-    colDiv<<<dimGrid, dimBlock, 0, stream>>>(a->data, b->data, c->data, M, N);
+    dim3 block(tile, 1);
+    dim3 grid((M / tile) + (!(M % tile) ? 0 : 1), N);
+    col_div<<<grid, block, 0, stream>>>(a->data, b->data, c->data, M, N);
 }
 
-__global__ void colDiv(float *a, float *b, float *c, uint32_t M, uint32_t N) {
+__global__ void col_div(float *a, float *b, float *c, uint32_t M, uint32_t N) {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < M) {
         uint32_t ind = i + blockIdx.y * M;
@@ -249,7 +249,7 @@ __global__ void colDiv(float *a, float *b, float *c, uint32_t M, uint32_t N) {
     }
 }
 
-__global__ void colMul(float *a, float *b, float *c, uint32_t M, uint32_t N) {
+__global__ void col_mul(float *a, float *b, float *c, uint32_t M, uint32_t N) {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < M) {
         uint32_t ind = i + blockIdx.y * M;
@@ -265,7 +265,7 @@ void Matrix::sum_cols(Matrix *output, Memory *aux_memory, uint32_t *params, cuda
     // lapt1 - load/adds per thread for first red. lev.
     // lapt2 - "" for 2nd ""
     uint32_t block1 = params[0];
-    uint32_t block2 = params[2];
+    uint32_t tile2 = params[2];
     uint32_t lapt1 = params[1];
     uint32_t lapt2 = params[3];
 
@@ -277,113 +277,100 @@ void Matrix::sum_cols(Matrix *output, Memory *aux_memory, uint32_t *params, cuda
     const uint32_t N = this->rows_padded; // size of each reduction
     const uint32_t M = this->cols_padded; // number of reductions
 
-    dim3 dimBlock(block1, 1);
-    dim3 dimGrid((N / (block1 * lapt1)) + (!(N % (block1 * lapt1)) ? 0 : 1), M);
+    dim3 block(block1, 1);
+    dim3 grid((N / (block1 * lapt1)) + (!(N % (block1 * lapt1)) ? 0 : 1), M);
 
-    dim3 dimBlock2(block2, 1);
-    dim3 dimGrid2((dimGrid.x / (block2 * lapt2)) + (!(dimGrid.x % (block2 * lapt2)) ? 0 : 1), M);
+    dim3 block2(tile2, 1);
+    dim3 grid2((grid.x / (tile2 * lapt2)) + (!(grid.x % (tile2 * lapt2)) ? 0 : 1), M);
 
     // Ensure there is enough memory allocated for first level reduction
-    assert(aux_memory->size <= dimGrid.x * dimGrid.y * sizeof(float));
+    assert(aux_memory->size <= grid.x * grid.y * sizeof(float));
 
-    if(block2 <= 1) { // if we only need one level of reduction
-        if(dimGrid.x > 1) {
-            fprintf(stderr, "sum_cols_d: dimGrid.x > 1\n");
+    if(tile2 <= 1) { // if we only need one level of reduction
+        if(grid.x > 1) {
+            fprintf(stderr, "sum_cols_d: grid.x > 1\n");
             exit(1);
         }
         switch(block1) {
             case 512:
-                reduce2D<512><<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, output->data, N);
+                reduce2d<512><<<grid, block, block.x * sizeof(float), stream>>>(this->data, output->data, N);
                 break;
             case 256:
-                reduce2D<256><<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, output->data, N);
+                reduce2d<256><<<grid, block, block.x * sizeof(float), stream>>>(this->data, output->data, N);
                 break;
             case 128:
-                reduce2D<128><<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, output->data, N);
+                reduce2d<128><<<grid, block, block.x * sizeof(float), stream>>>(this->data, output->data, N);
                 break;
             case 64:
-                reduce2D<64><<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, output->data, N);
+                reduce2d<64><<<grid, block, block.x * sizeof(float), stream>>>(this->data, output->data, N);
                 break;
             case 32:
-                reduce2D<32><<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, output->data, N);
+                reduce2d<32><<<grid, block, block.x * sizeof(float), stream>>>(this->data, output->data, N);
                 break;
             case 16:
-                reduce2D<16><<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, output->data, N);
+                reduce2d<16><<<grid, block, block.x * sizeof(float), stream>>>(this->data, output->data, N);
                 break;
             case 8:
-                reduce2D<8><<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, output->data, N);
+                reduce2d<8><<<grid, block, block.x * sizeof(float), stream>>>(this->data, output->data, N);
                 break;
         }
     } else { // if we need two levels of reduction
-        if(dimGrid2.x > 1) {
-            fprintf(stderr, "sum_cols_d: dimGrid2.x > 1\n");
+        if(grid2.x > 1) {
+            fprintf(stderr, "sum_cols_d: grid2.x > 1\n");
             exit(1);
         }
 
         switch(block1) {
             case 512:
-                reduce2D<512>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, aux_memory->data, N);
+                reduce2d<512><<<grid, block, block.x * sizeof(float), stream>>>(this->data, aux_memory->data, N);
                 break;
             case 256:
-                reduce2D<256>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, aux_memory->data, N);
+                reduce2d<256><<<grid, block, block.x * sizeof(float), stream>>>(this->data, aux_memory->data, N);
                 break;
             case 128:
-                reduce2D<128>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, aux_memory->data, N);
+                reduce2d<128><<<grid, block, block.x * sizeof(float), stream>>>(this->data, aux_memory->data, N);
                 break;
             case 64:
-                reduce2D<64>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, aux_memory->data, N);
+                reduce2d<64><<<grid, block, block.x * sizeof(float), stream>>>(this->data, aux_memory->data, N);
                 break;
             case 32:
-                reduce2D<32>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, aux_memory->data, N);
+                reduce2d<32><<<grid, block, block.x * sizeof(float), stream>>>(this->data, aux_memory->data, N);
                 break;
             case 16:
-                reduce2D<16>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, aux_memory->data, N);
+                reduce2d<16><<<grid, block, block.x * sizeof(float), stream>>>(this->data, aux_memory->data, N);
                 break;
             case 8:
-                reduce2D<8><<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, aux_memory->data, N);
+                reduce2d<8><<<grid, block, block.x * sizeof(float), stream>>>(this->data, aux_memory->data, N);
                 break;
         }
-        switch(block2) {
+        switch(tile2) {
             case 512:
-                reduce2D<512><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float), stream>>>(
-                    aux_memory->data, output->data, dimGrid.x
-                );
+                reduce2d<512>
+                    <<<grid2, block2, block2.x * sizeof(float), stream>>>(aux_memory->data, output->data, grid.x);
                 break;
             case 256:
-                reduce2D<256><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float), stream>>>(
-                    aux_memory->data, output->data, dimGrid.x
-                );
+                reduce2d<256>
+                    <<<grid2, block2, block2.x * sizeof(float), stream>>>(aux_memory->data, output->data, grid.x);
                 break;
             case 128:
-                reduce2D<128><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float), stream>>>(
-                    aux_memory->data, output->data, dimGrid.x
-                );
+                reduce2d<128>
+                    <<<grid2, block2, block2.x * sizeof(float), stream>>>(aux_memory->data, output->data, grid.x);
                 break;
             case 64:
-                reduce2D<64><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float), stream>>>(
-                    aux_memory->data, output->data, dimGrid.x
-                );
+                reduce2d<64>
+                    <<<grid2, block2, block2.x * sizeof(float), stream>>>(aux_memory->data, output->data, grid.x);
                 break;
             case 32:
-                reduce2D<32><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float), stream>>>(
-                    aux_memory->data, output->data, dimGrid.x
-                );
+                reduce2d<32>
+                    <<<grid2, block2, block2.x * sizeof(float), stream>>>(aux_memory->data, output->data, grid.x);
                 break;
             case 16:
-                reduce2D<16><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float), stream>>>(
-                    aux_memory->data, output->data, dimGrid.x
-                );
+                reduce2d<16>
+                    <<<grid2, block2, block2.x * sizeof(float), stream>>>(aux_memory->data, output->data, grid.x);
                 break;
             case 8:
-                reduce2D<8><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float), stream>>>(
-                    aux_memory->data, output->data, dimGrid.x
-                );
+                reduce2d<8>
+                    <<<grid2, block2, block2.x * sizeof(float), stream>>>(aux_memory->data, output->data, grid.x);
                 break;
         }
     }
@@ -391,13 +378,13 @@ void Matrix::sum_cols(Matrix *output, Memory *aux_memory, uint32_t *params, cuda
 
 void Matrix::sum_rows(Matrix *output, Memory *aux_memory, uint32_t *params, cudaStream_t stream) {
     // memory allocated and not freed
-    // block1 - block size for first reduction level
-    // block2 - "" for 2nd "" (set to 1 if not using 2nd level)
+    // tile1 - block size for first reduction level
+    // tile2 - "" for 2nd "" (set to 1 if not using 2nd level)
     // lapt1 - load/adds per thread for first red. lev.
     // lapt2 - "" for 2nd ""
 
-    uint32_t block1 = params[0];
-    uint32_t block2 = params[2];
+    uint32_t tile1 = params[0];
+    uint32_t tile2 = params[2];
     uint32_t lapt1 = params[1];
     uint32_t lapt2 = params[3];
 
@@ -409,128 +396,114 @@ void Matrix::sum_rows(Matrix *output, Memory *aux_memory, uint32_t *params, cuda
     const uint32_t N = this->cols_padded; // size of each reduction
     const uint32_t M = this->rows_padded; // number of reductions
 
-    dim3 dimBlock(block1, 1);
-    dim3 dimGrid((N / (block1 * lapt1)) + (!(N % (block1 * lapt1)) ? 0 : 1), M);
+    dim3 block(tile1, 1);
+    dim3 grid((N / (tile1 * lapt1)) + (!(N % (tile1 * lapt1)) ? 0 : 1), M);
 
-    dim3 dimBlock2(block2, 1);
-    dim3 dimGrid2((dimGrid.x / (block2 * lapt2)) + (!(dimGrid.x % (block2 * lapt2)) ? 0 : 1), M);
+    dim3 block2(tile2, 1);
+    dim3 grid2((grid.x / (tile2 * lapt2)) + (!(grid.x % (tile2 * lapt2)) ? 0 : 1), M);
 
     // Ensure there is enough memory allocated for first level reduction
-    assert(aux_memory->size <= dimGrid.x * dimGrid.y * sizeof(float));
+    assert(aux_memory->size <= grid.x * grid.y * sizeof(float));
 
-    if(block2 <= 1) { // if we only need one level of reduction
-        if(dimGrid.x > 1) {
-            fprintf(stderr, "sum_rows_d: dimGrid.x > 1\n");
+    if(tile2 <= 1) { // if we only need one level of reduction
+        if(grid.x > 1) {
+            fprintf(stderr, "sum_rows_d: grid.x > 1\n");
             exit(1);
         }
-        switch(block1) {
+        switch(tile1) {
             case 512:
-                reduce2DStrided<512>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, output->data, N, M);
+                reduce2d_strided<512><<<grid, block, block.x * sizeof(float), stream>>>(this->data, output->data, N, M);
                 break;
             case 256:
-                reduce2DStrided<256>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, output->data, N, M);
+                reduce2d_strided<256><<<grid, block, block.x * sizeof(float), stream>>>(this->data, output->data, N, M);
                 break;
             case 128:
-                reduce2DStrided<128>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, output->data, N, M);
+                reduce2d_strided<128><<<grid, block, block.x * sizeof(float), stream>>>(this->data, output->data, N, M);
                 break;
             case 64:
-                reduce2DStrided<64>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, output->data, N, M);
+                reduce2d_strided<64><<<grid, block, block.x * sizeof(float), stream>>>(this->data, output->data, N, M);
                 break;
             case 32:
-                reduce2DStrided<32>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, output->data, N, M);
+                reduce2d_strided<32><<<grid, block, block.x * sizeof(float), stream>>>(this->data, output->data, N, M);
                 break;
             case 16:
-                reduce2DStrided<16>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, output->data, N, M);
+                reduce2d_strided<16><<<grid, block, block.x * sizeof(float), stream>>>(this->data, output->data, N, M);
                 break;
             case 8:
-                reduce2DStrided<8>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, output->data, N, M);
+                reduce2d_strided<8><<<grid, block, block.x * sizeof(float), stream>>>(this->data, output->data, N, M);
                 break;
         }
     } else { // if we need two levels of reduction
-        if(dimGrid2.x > 1) {
-            fprintf(stderr, "sum_rows_d: dimGrid2.x > 1\n");
+        if(grid2.x > 1) {
+            fprintf(stderr, "sum_rows_d: grid2.x > 1\n");
             exit(1);
         }
 
-        switch(block1) {
+        switch(tile1) {
             case 512:
-                reduce2DStrided<512>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, aux_memory->data, N, M);
+                reduce2d_strided<512>
+                    <<<grid, block, block.x * sizeof(float), stream>>>(this->data, aux_memory->data, N, M);
                 break;
             case 256:
-                reduce2DStrided<256>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, aux_memory->data, N, M);
+                reduce2d_strided<256>
+                    <<<grid, block, block.x * sizeof(float), stream>>>(this->data, aux_memory->data, N, M);
                 break;
             case 128:
-                reduce2DStrided<128>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, aux_memory->data, N, M);
+                reduce2d_strided<128>
+                    <<<grid, block, block.x * sizeof(float), stream>>>(this->data, aux_memory->data, N, M);
                 break;
             case 64:
-                reduce2DStrided<64>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, aux_memory->data, N, M);
+                reduce2d_strided<64>
+                    <<<grid, block, block.x * sizeof(float), stream>>>(this->data, aux_memory->data, N, M);
                 break;
             case 32:
-                reduce2DStrided<32>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, aux_memory->data, N, M);
+                reduce2d_strided<32>
+                    <<<grid, block, block.x * sizeof(float), stream>>>(this->data, aux_memory->data, N, M);
                 break;
             case 16:
-                reduce2DStrided<16>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, aux_memory->data, N, M);
+                reduce2d_strided<16>
+                    <<<grid, block, block.x * sizeof(float), stream>>>(this->data, aux_memory->data, N, M);
                 break;
             case 8:
-                reduce2DStrided<8>
-                    <<<dimGrid, dimBlock, dimBlock.x * sizeof(float), stream>>>(this->data, aux_memory->data, N, M);
+                reduce2d_strided<8>
+                    <<<grid, block, block.x * sizeof(float), stream>>>(this->data, aux_memory->data, N, M);
                 break;
         }
-        switch(block2) {
+        switch(tile2) {
             case 512:
-                reduce2DStrided<512><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float), stream>>>(
-                    aux_memory->data, output->data, dimGrid.x, M
-                );
+                reduce2d_strided<512>
+                    <<<grid2, block2, block2.x * sizeof(float), stream>>>(aux_memory->data, output->data, grid.x, M);
                 break;
             case 256:
-                reduce2DStrided<256><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float), stream>>>(
-                    aux_memory->data, output->data, dimGrid.x, M
-                );
+                reduce2d_strided<256>
+                    <<<grid2, block2, block2.x * sizeof(float), stream>>>(aux_memory->data, output->data, grid.x, M);
                 break;
             case 128:
-                reduce2DStrided<128><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float), stream>>>(
-                    aux_memory->data, output->data, dimGrid.x, M
-                );
+                reduce2d_strided<128>
+                    <<<grid2, block2, block2.x * sizeof(float), stream>>>(aux_memory->data, output->data, grid.x, M);
                 break;
             case 64:
-                reduce2DStrided<64><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float), stream>>>(
-                    aux_memory->data, output->data, dimGrid.x, M
-                );
+                reduce2d_strided<64>
+                    <<<grid2, block2, block2.x * sizeof(float), stream>>>(aux_memory->data, output->data, grid.x, M);
                 break;
             case 32:
-                reduce2DStrided<32><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float), stream>>>(
-                    aux_memory->data, output->data, dimGrid.x, M
-                );
+                reduce2d_strided<32>
+                    <<<grid2, block2, block2.x * sizeof(float), stream>>>(aux_memory->data, output->data, grid.x, M);
                 break;
             case 16:
-                reduce2DStrided<16><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float), stream>>>(
-                    aux_memory->data, output->data, dimGrid.x, M
-                );
+                reduce2d_strided<16>
+                    <<<grid2, block2, block2.x * sizeof(float), stream>>>(aux_memory->data, output->data, grid.x, M);
                 break;
             case 8:
-                reduce2DStrided<8><<<dimGrid2, dimBlock2, dimBlock2.x * sizeof(float), stream>>>(
-                    aux_memory->data, output->data, dimGrid.x, M
-                );
+                reduce2d_strided<8>
+                    <<<grid2, block2, block2.x * sizeof(float), stream>>>(aux_memory->data, output->data, grid.x, M);
                 break;
         }
     }
 }
 
 template <uint32_t blockSize>
-__global__ void reduce1DDiff(float *g_idata1, float *g_idata2, float *g_odata, uint32_t N) {
+__global__ void reduce1d_diff(float *g_idata1, float *g_idata2, float *g_odata, uint32_t N) {
     extern __shared__ float sdata[];
     float *diff = (float *) sdata;
     float *sum = (float *) &sdata[blockSize];
@@ -603,7 +576,7 @@ __global__ void reduce1DDiff(float *g_idata1, float *g_idata2, float *g_odata, u
 }
 
 template <uint32_t blockSize>
-__global__ void reduce1DDiv(float *g_idata1, float *g_idata2, float *g_odata, uint32_t N) {
+__global__ void reduce1d_div(float *g_idata1, float *g_idata2, float *g_odata, uint32_t N) {
     extern __shared__ float sdata[];
     // each thread loads one element from global to shared mem
     uint32_t tid = threadIdx.x;
@@ -666,7 +639,7 @@ __global__ void reduce1DDiv(float *g_idata1, float *g_idata2, float *g_odata, ui
     }
 }
 
-template <uint32_t blockSize> __global__ void reduce2D(float *g_idata, float *g_odata, uint32_t N) {
+template <uint32_t blockSize> __global__ void reduce2d(float *g_idata, float *g_odata, uint32_t N) {
     extern __shared__ float sdata[];
     // each thread loads one element from global to shared mem
     uint32_t tid = threadIdx.x;
@@ -714,7 +687,7 @@ template <uint32_t blockSize> __global__ void reduce2D(float *g_idata, float *g_
 }
 
 template <uint32_t blockSize>
-__global__ void reduce2DStrided(float *g_idata, float *g_odata, uint32_t N, uint32_t stride) {
+__global__ void reduce2d_strided(float *g_idata, float *g_odata, uint32_t N, uint32_t stride) {
     extern __shared__ float sdata[];
     // each thread loads one element from global to shared mem
     uint32_t tid = threadIdx.x;
@@ -761,15 +734,15 @@ __global__ void reduce2DStrided(float *g_idata, float *g_odata, uint32_t N, uint
     if(tid == 0) g_odata[blockIdx.y + blockIdx.x * gridDim.y] = sdata[0];
 }
 
-void grid2D(dim3 *dimGrid) {
+void grid2d(dim3 *grid) {
     // take a 1D grid that is too large and change to 2D
-    uint32_t x = dimGrid->x;
+    uint32_t x = grid->x;
     uint32_t y = 1;
 
     while(x > MAX_BLOCKS) {
         x >>= 2;
         y <<= 2;
     }
-    dimGrid->y = y;
-    dimGrid->x = dimGrid->x / y + (!(dimGrid->x % y) ? 0 : 1);
+    grid->y = y;
+    grid->x = grid->x / y + (!(grid->x % y) ? 0 : 1);
 }

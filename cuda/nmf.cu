@@ -30,11 +30,9 @@ int32_t main(int32_t argc, char *argv[]) {
     Matrix H = read_matrix("../H.bin", stream);
     Matrix W = read_matrix("../W.bin", stream);
 
-    // iterative nmf minimization
+    // Run iterative nmf minimization
     run_async(&W, &H, &X, CONVERGE_THRESH, MAX_ITER, cublas_handle, stream);
 
-    // write results matrices to binary files
-    // (can be read with export_bin.m in Matlab)
     write_matrix(&W, "../Wout.bin", stream);
     write_matrix(&H, "../Hout.bin", stream);
 
@@ -82,12 +80,12 @@ void run_async(
     init_params(N, N_params);
     init_params(M, M_params);
 
-    Memory aux_memory(512); // auxiliary memory for summing rows/cols. The size should be dynamically allocated
-
     // block size in vector arithmetic operations
     const uint32_t BLOCK_SIZE = 128;
 
-    // initialize temp matrices -----------------------
+    Memory aux_memory(512); // auxiliary memory for summing rows/cols. The size should be dynamically allocated
+
+    // initialize temporary matrices
     Matrix Z(0.0f, M, N, stream);     // Matrix to hold X./(W*H+EPS)
     Matrix WtZ(0.0f, K, N, stream);   // Matrix to hold W'*Z
     Matrix ZHt(0.0f, M, K, stream);   // Matrix to hold Z*H'
@@ -215,8 +213,7 @@ Matrix read_matrix(std::string file, cudaStream_t stream) {
 }
 
 void write_matrix(Matrix *matrix, std::string file, cudaStream_t stream) {
-    // write Matrix to file using column-major order
-    // dimensions are written as leading ints
+    // write Matrix to file using column-major order. Dimensions are written as leading ints
 
     assert(matrix->rows <= matrix->rows_padded);
     assert(matrix->cols <= matrix->cols_padded);
@@ -233,13 +230,22 @@ void write_matrix(Matrix *matrix, std::string file, cudaStream_t stream) {
     size_t count;
 
     fp = fopen(file.c_str(), "wb");
+
     count = fwrite(&(matrix->rows), sizeof(uint32_t), 1, fp);
-    if(count < 1) fprintf(stderr, "write_matrix: fwrite error\n");
+    if(count < 1) {
+        fprintf(stderr, "write_matrix: fwrite error\n");
+    }
+
     count = fwrite(&(matrix->cols), sizeof(uint32_t), 1, fp);
-    if(count < 1) fprintf(stderr, "write_matrix: fwrite error\n");
+    if(count < 1) {
+        fprintf(stderr, "write_matrix: fwrite error\n");
+    }
 
     count = fwrite(temp, sizeof(float), matrix->rows * matrix->cols, fp);
-    if(count < (size_t) (matrix->rows * matrix->cols)) fprintf(stderr, "write_matrix: fwrite error\n");
+    if(count < (size_t) (matrix->rows * matrix->cols)) {
+        fprintf(stderr, "write_matrix: fwrite error\n");
+    }
+
     fclose(fp);
 
     cudaAssert(cudaFreeHost(temp));
