@@ -14,6 +14,14 @@ void run_async(
     Matrix *W, Matrix *H, Matrix *X, const float thresh, const uint32_t max_iter, cublasHandle_t cublas_handle,
     cudaStream_t stream
 );
+void update_h(
+    Matrix *W, Matrix *H, Matrix *X, Matrix *Z, Matrix *sumW, Matrix *WtZ, uint32_t *M_params, Memory *aux_memory,
+    cublasHandle_t cublas_handle, cudaStream_t stream
+);
+void update_w(
+    Matrix *W, Matrix *H, Matrix *X, Matrix *Z, Matrix *sumH2, Matrix *ZHt, uint32_t *N_params, Memory *aux_memory,
+    cublasHandle_t cublas_handle, cudaStream_t stream
+);
 uint32_t nextpow2(uint32_t x);
 Matrix read_matrix(std::string file, cudaStream_t stream);
 void write_matrix(Matrix *matrix, std::string file, cudaStream_t stream);
@@ -80,9 +88,6 @@ void run_async(
     init_params(N, N_params);
     init_params(M, M_params);
 
-    // block size in vector arithmetic operations
-    const uint32_t BLOCK_SIZE = 128;
-
     Memory aux_memory(512); // auxiliary memory for summing rows/cols. The size should be dynamically allocated
 
     // initialize temporary matrices
@@ -92,82 +97,82 @@ void run_async(
     Matrix sumW(0.0f, 1, K, stream);  // Matrix to hold sum(W) [sum of cols of W]
     Matrix sumH2(0.0f, K, 1, stream); // Matrix to hold sum(H,2) [sum of rows of H]
 
+    cudaGraph_t graph;
+    cudaGraphExec_t graph_exec;
+
+    cudaAssert(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
+    // MatLab algorithm:
+    // Z = X./(W*H+eps); H = H.*(W'*Z)./(repmat(sum(W)',1,F));
+    // Z = X./(W*H+eps);
+    // W = W.*(Z*H')./(repmat(sum(H,2)',N,1));
+    update_h(W, H, X, &Z, &sumW, &WtZ, M_params, &aux_memory, cublas_handle, stream);
+    update_w(W, H, X, &Z, &sumH2, &ZHt, N_params, &aux_memory, cublas_handle, stream);
+    cudaAssert(cudaStreamEndCapture(stream, &graph));
+    cudaAssert(cudaGraphInstantiate(&graph_exec, graph, 0));
+
     for(uint32_t i = 0; i < max_iter; i++) {
-        /* matlab algorithm
-           Z = X./(W*H+eps); H = H.*(W'*Z)./(repmat(sum(W)',1,F));
-           Z = X./(W*H+eps);
-           W = W.*(Z*H')./(repmat(sum(H,2)',N,1));
-           */
-
-        //
-        // UPDATE H -----------------------------
-        //
-
-        // WH = W*H
-        matrix_multiply(W, H, &Z, cublas_handle);
-
-        // WH = WH+EPS
-        Z.set_epsilon(BLOCK_SIZE, stream);
-
-        // Z = X./WH
-        element_divide(X, &Z, &Z, BLOCK_SIZE, stream);
-
-        // sum cols of W into row vector
-        W->sum_cols(&sumW, &aux_memory, M_params, stream);
-        sumW.set_epsilon(32, stream);
-
-        // convert sumW to col vector (transpose)
-        sumW.rows_padded = sumW.cols_padded;
-        sumW.cols_padded = 1;
-
-        // WtZ = W'*Z
-        matrix_multiply_AtB(W, &Z, &WtZ, cublas_handle);
-
-        // WtZ = WtZ./(repmat(sum(W)',1,H.cols)
-        //[element divide cols of WtZ by sumW']
-        col_divide(&WtZ, &sumW, &WtZ, stream);
-
-        // H = H.*WtZ
-        element_multiply(H, &WtZ, H, BLOCK_SIZE, stream);
-
-        //
-        // UPDATE W ---------------------------
-        //
-
-        // WH = W*H
-        matrix_multiply(W, H, &Z, cublas_handle);
-
-        // WH = WH+EPS
-        Z.set_epsilon(BLOCK_SIZE, stream);
-
-        // Z = X./WH
-        element_divide(X, &Z, &Z, BLOCK_SIZE, stream);
-
-        // sum rows of H into col vector
-        H->sum_rows(&sumH2, &aux_memory, N_params, stream);
-        sumH2.set_epsilon(32, stream);
-
-        // convert sumH2 to row vector (transpose)
-        sumH2.cols_padded = sumH2.rows_padded;
-        sumH2.rows_padded = 1;
-
-        // ZHt = Z*H'
-        matrix_multiply_ABt(&Z, H, &ZHt, cublas_handle);
-
-        // ZHt = ZHt./(repmat(sum(H,2)',W.rows,1)
-        //[element divide rows of ZHt by sumH2']
-        row_divide(&ZHt, &sumH2, &ZHt, stream);
-
-        // W = W.*ZHt
-        element_multiply(W, &ZHt, W, BLOCK_SIZE, stream);
-
-        // reset sumW to row vector
-        sumW.cols_padded = sumW.rows_padded;
-        sumW.rows_padded = 1;
-        // reset sumH2 to col vector
-        sumH2.rows_padded = sumH2.cols_padded;
-        sumH2.cols_padded = 1;
+        cudaAssert(cudaGraphLaunch(graph_exec, stream));
     }
+}
+
+void update_h(
+    Matrix *W, Matrix *H, Matrix *X, Matrix *Z, Matrix *sumW, Matrix *WtZ, uint32_t *M_params, Memory *aux_memory,
+    cublasHandle_t cublas_handle, cudaStream_t stream
+) {
+    uint32_t BLOCK_SIZE = 128;
+
+    // WH = W*H
+    matrix_multiply(W, H, Z, cublas_handle);
+
+    // WH = WH+EPS
+    Z->set_epsilon(BLOCK_SIZE, stream);
+
+    // Z = X./WH
+    element_divide(X, Z, Z, BLOCK_SIZE, stream);
+
+    // sum cols of W into row vector
+    W->sum_cols(sumW, aux_memory, M_params, stream);
+    sumW->set_epsilon(32, stream);
+
+    // WtZ = W'*Z
+    matrix_multiply_AtB(W, Z, WtZ, cublas_handle);
+
+    // WtZ = WtZ./(repmat(sum(W)',1,H.cols)
+    //[element divide cols of WtZ by sumW']
+    col_divide(WtZ, sumW, WtZ, stream);
+
+    // H = H.*WtZ
+    element_multiply(H, WtZ, H, BLOCK_SIZE, stream);
+}
+
+void update_w(
+    Matrix *W, Matrix *H, Matrix *X, Matrix *Z, Matrix *sumH2, Matrix *ZHt, uint32_t *N_params, Memory *aux_memory,
+    cublasHandle_t cublas_handle, cudaStream_t stream
+) {
+    uint32_t BLOCK_SIZE = 128;
+
+    // WH = W*H
+    matrix_multiply(W, H, Z, cublas_handle);
+
+    // WH = WH+EPS
+    Z->set_epsilon(BLOCK_SIZE, stream);
+
+    // Z = X./WH
+    element_divide(X, Z, Z, BLOCK_SIZE, stream);
+
+    // sum rows of H into col vector
+    H->sum_rows(sumH2, aux_memory, N_params, stream);
+    sumH2->set_epsilon(32, stream);
+
+    // ZHt = Z*H'
+    matrix_multiply_ABt(Z, H, ZHt, cublas_handle);
+
+    // ZHt = ZHt./(repmat(sum(H,2)',W.rows,1)
+    //[element divide rows of ZHt by sumH2']
+    row_divide(ZHt, sumH2, ZHt, stream);
+
+    // W = W.*ZHt
+    element_multiply(W, ZHt, W, BLOCK_SIZE, stream);
 }
 
 uint32_t nextpow2(uint32_t x) {

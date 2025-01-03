@@ -201,10 +201,10 @@ void Matrix::set_epsilon(uint32_t tile, cudaStream_t stream) {
 }
 
 void row_divide(Matrix *a, Matrix *b, Matrix *c, cudaStream_t stream) {
-    // element divide every row of 'a' by row vector 'b'
+    // element divide every row of 'a' by column vector 'b'
 
-    if(a->cols_padded != b->cols_padded || a->rows_padded != c->rows_padded || a->cols_padded != c->cols_padded ||
-       b->rows_padded != 1) {
+    if(a->cols_padded != b->rows_padded || a->rows_padded != c->rows_padded || a->cols_padded != c->cols_padded ||
+       b->cols_padded != 1) {
         fprintf(stderr, "row_divide_d: dimension error\n");
         exit(1);
     }
@@ -224,10 +224,10 @@ __global__ void row_div(float *a, float *b, float *c, uint32_t M, uint32_t N) {
 }
 
 void col_divide(Matrix *a, Matrix *b, Matrix *c, cudaStream_t stream) {
-    // element divide every column of 'a' by column vector 'b'
+    // element divide every column of 'a' by row vector 'b'
 
-    if(a->rows_padded != b->rows_padded || a->rows_padded != c->rows_padded || a->cols_padded != c->cols_padded ||
-       b->cols_padded != 1) {
+    if(a->rows_padded != b->cols_padded || a->rows_padded != c->rows_padded || a->cols_padded != c->cols_padded ||
+       b->rows_padded != 1) {
         fprintf(stderr, "col_divide: dimension error\n");
         exit(1);
     }
