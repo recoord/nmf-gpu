@@ -97,15 +97,21 @@ void run_async(
     Matrix sumW(0.0f, 1, K, stream);  // Matrix to hold sum(W) [sum of cols of W]
     Matrix sumH2(0.0f, K, 1, stream); // Matrix to hold sum(H,2) [sum of rows of H]
 
-    for(uint32_t i = 0; i < max_iter; i++) {
-        /* matlab algorithm
-           Z = X./(W*H+eps); H = H.*(W'*Z)./(repmat(sum(W)',1,F));
-           Z = X./(W*H+eps);
-           W = W.*(Z*H')./(repmat(sum(H,2)',N,1));
-           */
+    cudaGraph_t graph;
+    cudaGraphExec_t graph_exec;
 
-        update_h(W, H, X, &Z, &sumW, &WtZ, M_params, &aux_memory, cublas_handle, stream);
-        update_w(W, H, X, &Z, &sumH2, &ZHt, N_params, &aux_memory, cublas_handle, stream);
+    cudaAssert(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
+    // MatLab algorithm:
+    // Z = X./(W*H+eps); H = H.*(W'*Z)./(repmat(sum(W)',1,F));
+    // Z = X./(W*H+eps);
+    // W = W.*(Z*H')./(repmat(sum(H,2)',N,1));
+    update_h(W, H, X, &Z, &sumW, &WtZ, M_params, &aux_memory, cublas_handle, stream);
+    update_w(W, H, X, &Z, &sumH2, &ZHt, N_params, &aux_memory, cublas_handle, stream);
+    cudaAssert(cudaStreamEndCapture(stream, &graph));
+    cudaAssert(cudaGraphInstantiate(&graph_exec, graph, 0));
+
+    for(uint32_t i = 0; i < max_iter; i++) {
+        cudaAssert(cudaGraphLaunch(graph_exec, stream));
     }
 }
 
