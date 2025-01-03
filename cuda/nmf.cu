@@ -1,275 +1,98 @@
-#include "matrix.h"
+#include <cassert>
 #include <cuda_runtime_api.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/time.h>
-#include <time.h>
 
-// status printed and convergence check every ITER_CHECK iterations
-#define ITER_CHECK 25
-// max number of iterations
-#define MAX_ITER 200
-// set to zero to guarantee MAX_ITER iterations, 0.001 is a good value otherwise
-#define CONVERGE_THRESH 0
+#include "error-check.hpp"
+#include "matrix.cuh"
 
-// number of timers used in profiling (don't change)
-#define TIMERS 10
-char *tname[] = {"total", "sgemm", "eps", "vecdiv", "vecmult", "sumrows", "sumcols", "coldiv", "rowdiv", "check"};
+#define ITER_CHECK 25     // status printed and convergence check every ITER_CHECK iterations
+#define MAX_ITER 200      // max number of iterations
+#define CONVERGE_THRESH 0 // set to zero to guarantee MAX_ITER iterations, 0.001 is a good value otherwise
 
-
-void update_div(matrix W, matrix H, matrix X, const float thresh, const int max_iter, double *t, int verbose);
-double get_time();
-unsigned nextpow2(unsigned x);
+void run_async(
+    Matrix *W, Matrix *H, Matrix *X, const float thresh, const uint32_t max_iter, cublasHandle_t cublas_handle,
+    cudaStream_t stream
+);
+uint32_t nextpow2(uint32_t x);
+Matrix read_matrix(std::string file, cudaStream_t stream);
+void write_matrix(Matrix *matrix, std::string file, cudaStream_t stream);
 
 
-int main(int argc, char *argv[]) {
+int32_t main(int32_t argc, char *argv[]) {
+    cudaStream_t stream;
+    cudaAssert(cudaStreamCreate(&stream));
+    cublasHandle_t cublas_handle;
+    cudaAssert(cublasCreate(&cublas_handle));
+    cudaAssert(cublasSetStream(cublas_handle, stream));
 
+    Matrix X = read_matrix("../X.bin", stream);
+    Matrix H = read_matrix("../H.bin", stream);
+    Matrix W = read_matrix("../W.bin", stream);
 
-    // factor X into W*H
-    matrix W, H, X;
+    // Run iterative nmf minimization
+    run_async(&W, &H, &X, CONVERGE_THRESH, MAX_ITER, cublas_handle, stream);
 
+    write_matrix(&W, "../Wout.bin", stream);
+    write_matrix(&H, "../Hout.bin", stream);
 
-    // read in matrix data:
-    // X - matrix to factorize
-    // W - initial W matrix
-    // H - initial H matrix
-    read_matrix(&W, "../W.bin");
-    read_matrix(&X, "../X.bin");
-    read_matrix(&H, "../H.bin");
+    cudaAssert(cublasDestroy(cublas_handle));
+    cudaAssert(cudaStreamDestroy(stream));
 
-    // make sure no zero elements
-    matrix_eps(X);
-    matrix_eps(H);
-    matrix_eps(W);
-
-    int max_iter;
-    if(argc > 1)
-        max_iter = atoi(argv[1]);
-    else
-        max_iter = MAX_ITER;
-
-    // iterative nmf minimization
-    update_div(W, H, X, CONVERGE_THRESH, max_iter, NULL, 1);
-
-
-    // write results matrices to binary files
-    // (can be read with export_bin.m in Matlab)
-    write_matrix(W, "../Wout.bin");
-    write_matrix(H, "../Hout.bin");
-
-    destroy_matrix(&W);
-    destroy_matrix(&H);
-    destroy_matrix(&X);
     return 0;
 }
 
+void init_params(uint32_t value, uint32_t *params) {
+    uint32_t padded_value = value;
+    if(value % PAD_MULT != 0) {
+        padded_value = value + (PAD_MULT - (value % PAD_MULT));
+    }
 
-double get_time() {
-    // output time in microseconds
+    uint32_t rem;
+    rem = nextpow2(padded_value / 128 + (!(padded_value % 128) ? 0 : 1));
+    if(rem <= 128) {
+        params[0] = 128;
+        params[1] = rem;
+    } else if(rem <= 512) {
+        params[0] = rem;
+        params[1] = 128;
+    } else {
+        fprintf(stderr, "reduction parameter error\n");
+        exit(1);
+    }
 
-    // the following line is required for function-wise timing to work,
-    // but it slows down overall execution time.
-    // comment out for faster execution
-    cudaThreadSynchronize();
-
-    struct timeval t;
-    gettimeofday(&t, NULL);
-    return (double) (t.tv_sec + t.tv_usec / 1E6);
+    params[2] = 1;
+    params[3] = 1;
 }
 
-int start_time(double *t, int i) {
-    if(t != NULL) {
-        t[i] -= get_time();
-        return 1;
-    } else
-        return 0;
-}
-
-int stop_time(double *t, int i) {
-    if(t != NULL) {
-        t[i] += get_time();
-        return 1;
-    } else
-        return 0;
-}
-
-
-void update_div(matrix W0, matrix H0, matrix X0, const float thresh, const int max_iter, double *t, int verbose) {
-    // run iterative multiplicative updates on W,H
-
-    cublasInit();
-
-    const int M = W0.dim[0];
-    const int K = W0.dim[1];
-    const int N = H0.dim[1];
-
-    // pad matrix dimensions to multiples of:
-    const int PAD_MULT = 32;
-
-    int M_padded = M;
-    if(M % PAD_MULT != 0) M_padded = M + (PAD_MULT - (M % PAD_MULT));
-
-    int K_padded = K;
-    if(K % PAD_MULT != 0) K_padded = K + (PAD_MULT - (K % PAD_MULT));
-
-    int N_padded = N;
-    if(N % PAD_MULT != 0) N_padded = N + (PAD_MULT - (N % PAD_MULT));
-
-    // unpadded test
-    // M_padded = M;
-    // N_padded = N;
-    // K_padded = K;
+void run_async(
+    Matrix *W, Matrix *H, Matrix *X, const float thresh, const uint32_t max_iter, cublasHandle_t cublas_handle,
+    cudaStream_t stream
+) {
+    const uint32_t M = W->rows;
+    const uint32_t K = W->cols;
+    const uint32_t N = H->cols;
 
     // find reduction parameters
-    int MN_params[4] = {1, 1, 1, 1}; // M*N size reduction (whole matrix)
-    int N_params[4] = {1, 1, 1, 1};  // N size reductions (rows)
-    int M_params[4] = {1, 1, 1, 1};  // M size reductions (cols)
+    uint32_t N_params[4]; // N size reductions (rows)
+    uint32_t M_params[4]; // M size reductions (cols)
 
-    int rem;
-    rem = nextpow2(N_padded / 128 + (!(N_padded % 128) ? 0 : 1));
-    if(rem <= 128) {
-        N_params[0] = 128;
-        N_params[1] = rem;
-    } else if(rem <= 512) {
-        N_params[0] = rem;
-        N_params[1] = 128;
-    } else {
-        fprintf(stderr, "reduction parameter error\n");
-        exit(1);
-    }
-
-
-    rem = nextpow2(M_padded / 128 + (!(M_padded % 128) ? 0 : 1));
-    if(rem <= 128) {
-        M_params[0] = 128;
-        M_params[1] = rem;
-    } else if(rem <= 512) {
-        M_params[0] = rem;
-        M_params[1] = 128;
-    } else {
-        fprintf(stderr, "reduction parameter error\n");
-        exit(1);
-    }
-
-    MN_params[0] = M_params[0];
-    MN_params[1] = M_params[1];
-    MN_params[2] = N_params[0];
-    MN_params[3] = N_params[1];
-
-    // printf("reduction parameters: ");
-    // printf("%u,%u,%u,%u\n",MN_params[0],MN_params[1],MN_params[2],MN_params[3]);
-
+    init_params(N, N_params);
+    init_params(M, M_params);
 
     // block size in vector arithmetic operations
-    const int BLOCK_SIZE = 128;
+    const uint32_t BLOCK_SIZE = 128;
 
+    Memory aux_memory(512); // auxiliary memory for summing rows/cols. The size should be dynamically allocated
 
-    // copy host matrices to device memory
-    copy_matrix_to_device(&W0);
-    copy_matrix_to_device(&H0);
-    copy_matrix_to_device(&X0);
+    // initialize temporary matrices
+    Matrix Z(0.0f, M, N, stream);     // Matrix to hold X./(W*H+EPS)
+    Matrix WtZ(0.0f, K, N, stream);   // Matrix to hold W'*Z
+    Matrix ZHt(0.0f, M, K, stream);   // Matrix to hold Z*H'
+    Matrix sumW(0.0f, 1, K, stream);  // Matrix to hold sum(W) [sum of cols of W]
+    Matrix sumH2(0.0f, K, 1, stream); // Matrix to hold sum(H,2) [sum of rows of H]
 
-
-    // matrix to hold W*H
-    matrix WH0;
-    create_matrix_on_device(&WH0, M, N, 0.0);
-
-
-    int i;
-
-    /*
-       double t_array[TIMERS];
-       if(t==NULL)
-       t = t_array;
-       */
-    if(t != NULL) {
-        for(i = 0; i < TIMERS; i++) t[i] = 0;
-    }
-
-    // float nancheck, zerocheck;
-    //  compute initial divergence and error
-    float diff, div, change, prev_diff, prev_div;
-    matrix_multiply_d(W0, H0, WH0);
-    diff = matrix_difference_norm_d(compute, X0, WH0, MN_params);
-
-
-    div = matrix_div_d(compute, X0, WH0, MN_params);
-    if(verbose) printf("i: %4i, error: %6.4f, initial div: %8.4e\n", 0, diff, div);
-
-
-    // free device memory for unpadded matrices
-    free_matrix_on_device(&W0);
-    free_matrix_on_device(&H0);
-    free_matrix_on_device(&X0);
-    free_matrix_on_device(&WH0);
-
-
-    // initialize temp matrices -----------------------
-
-
-    // matrix to hold X./(W*H+EPS)
-    matrix Z;
-    create_matrix_on_device(&Z, M_padded, N_padded, 0.0);
-
-    // matrix to hold W'*Z
-    matrix WtZ;
-    create_matrix_on_device(&WtZ, K_padded, N_padded, 0.0);
-
-    // matrix to hold Z*H'
-    matrix ZHt;
-    create_matrix_on_device(&ZHt, M_padded, K_padded, 0.0);
-
-    // matrix to hold sum(W) [sum of cols of W]
-    matrix sumW;
-    create_matrix_on_device(&sumW, 1, K_padded, 0.0);
-
-    // matrix to hold sum(H,2) [sum of rows of H]
-    matrix sumH2;
-    create_matrix_on_device(&sumH2, K_padded, 1, 0.0);
-
-
-    // matrices to hold padded versions of matrices
-    matrix W;
-    create_matrix_on_device(&W, M_padded, K_padded, 0.0);
-
-    matrix H;
-    create_matrix_on_device(&H, K_padded, N_padded, 0.0);
-
-    matrix X;
-    create_matrix_on_device(&X, M_padded, N_padded, 0.0);
-
-
-    // move host matrices to padded device memory
-    copy_matrix_to_device_padded(W0, W);
-    copy_matrix_to_device_padded(H0, H);
-    copy_matrix_to_device_padded(X0, X);
-
-
-    // t[0] -= get_time();
-    start_time(t, 0);
-
-    // matrix test1;
-
-    for(i = 0; i < max_iter; i++) {
-
-        // check for convergence, print status
-        if(i % ITER_CHECK == 0 && i != 0) {
-            // t[9] -= get_time();
-            start_time(t, 9);
-            matrix_multiply_d(W, H, Z);
-            prev_diff = diff;
-            diff = matrix_difference_norm_d(compute, X, Z, MN_params);
-            change = (prev_diff - diff) / prev_diff;
-            // t[9] += get_time();
-            stop_time(t, 9);
-            if(verbose) printf("i: %4i, error: %6.4f, %% change: %8.5f\n", i, diff, change);
-            if(change < thresh) {
-                printf("converged\n");
-                break;
-            }
-        }
-
-
+    for(uint32_t i = 0; i < max_iter; i++) {
         /* matlab algorithm
            Z = X./(W*H+eps); H = H.*(W'*Z)./(repmat(sum(W)',1,F));
            Z = X./(W*H+eps);
@@ -280,211 +103,74 @@ void update_div(matrix W0, matrix H0, matrix X0, const float thresh, const int m
         // UPDATE H -----------------------------
         //
 
-
         // WH = W*H
-        // t[1] -= get_time();
-        start_time(t, 1);
-        matrix_multiply_d(W, H, Z);
-        // t[1] += get_time();
-        stop_time(t, 1);
-
+        matrix_multiply(W, H, &Z, cublas_handle);
 
         // WH = WH+EPS
-        // t[2] -= get_time();
-        start_time(t, 2);
-        matrix_eps_d(Z, BLOCK_SIZE);
-        // t[2] += get_time();
-        stop_time(t, 2);
-
+        Z.set_epsilon(BLOCK_SIZE, stream);
 
         // Z = X./WH
-        // t[3] -= get_time();
-        start_time(t, 3);
-        element_divide_d(X, Z, Z, BLOCK_SIZE);
-        // t[3] += get_time();
-        stop_time(t, 3);
-
+        element_divide(X, &Z, &Z, BLOCK_SIZE, stream);
 
         // sum cols of W into row vector
-        // t[6] -= get_time();
-        start_time(t, 6);
-        sum_cols_d(compute, W, sumW, M_params);
-        matrix_eps_d(sumW, 32);
-        // t[6] += get_time();
-        stop_time(t, 6);
+        W->sum_cols(&sumW, &aux_memory, M_params, stream);
+        sumW.set_epsilon(32, stream);
 
         // convert sumW to col vector (transpose)
-        sumW.dim[0] = sumW.dim[1];
-        sumW.dim[1] = 1;
-
+        sumW.rows_padded = sumW.cols_padded;
+        sumW.cols_padded = 1;
 
         // WtZ = W'*Z
-        // t[1] -= get_time();
-        start_time(t, 1);
-        matrix_multiply_AtB_d(W, Z, WtZ);
-        // t[1] += get_time();
-        stop_time(t, 1);
+        matrix_multiply_AtB(W, &Z, &WtZ, cublas_handle);
 
-
-        // WtZ = WtZ./(repmat(sum(W)',1,H.dim[1])
+        // WtZ = WtZ./(repmat(sum(W)',1,H.cols)
         //[element divide cols of WtZ by sumW']
-        // t[7] -= get_time();
-        start_time(t, 7);
-        col_divide_d(WtZ, sumW, WtZ);
-        // t[7] += get_time();
-        stop_time(t, 7);
-
+        col_divide(&WtZ, &sumW, &WtZ, stream);
 
         // H = H.*WtZ
-        // t[4] -= get_time();
-        start_time(t, 4);
-        element_multiply_d(H, WtZ, H, BLOCK_SIZE);
-        // t[4] += get_time();
-        stop_time(t, 4);
-
+        element_multiply(H, &WtZ, H, BLOCK_SIZE, stream);
 
         //
         // UPDATE W ---------------------------
         //
 
         // WH = W*H
-        // t[1] -= get_time();
-        start_time(t, 1);
-        matrix_multiply_d(W, H, Z);
-        // t[1] += get_time();
-        stop_time(t, 1);
-
+        matrix_multiply(W, H, &Z, cublas_handle);
 
         // WH = WH+EPS
-        // t[2] -= get_time();
-        start_time(t, 2);
-        matrix_eps_d(Z, BLOCK_SIZE);
-        // t[2] += get_time();
-        stop_time(t, 2);
+        Z.set_epsilon(BLOCK_SIZE, stream);
 
         // Z = X./WH
-        // t[3] -= get_time();
-        start_time(t, 3);
-        element_divide_d(X, Z, Z, BLOCK_SIZE);
-        // t[3] += get_time();
-        stop_time(t, 3);
-
+        element_divide(X, &Z, &Z, BLOCK_SIZE, stream);
 
         // sum rows of H into col vector
-        // t[5] -= get_time();
-        start_time(t, 5);
-        sum_rows_d(compute, H, sumH2, N_params);
-        matrix_eps_d(sumH2, 32);
-        // t[5] += get_time();
-        stop_time(t, 5);
+        H->sum_rows(&sumH2, &aux_memory, N_params, stream);
+        sumH2.set_epsilon(32, stream);
 
         // convert sumH2 to row vector (transpose)
-        sumH2.dim[1] = sumH2.dim[0];
-        sumH2.dim[0] = 1;
+        sumH2.cols_padded = sumH2.rows_padded;
+        sumH2.rows_padded = 1;
 
         // ZHt = Z*H'
-        // t[1] -= get_time();
-        start_time(t, 1);
-        matrix_multiply_ABt_d(Z, H, ZHt);
-        // t[1] += get_time();
-        stop_time(t, 1);
+        matrix_multiply_ABt(&Z, H, &ZHt, cublas_handle);
 
-        // ZHt = ZHt./(repmat(sum(H,2)',W.dim[0],1)
+        // ZHt = ZHt./(repmat(sum(H,2)',W.rows,1)
         //[element divide rows of ZHt by sumH2']
-        // t[8] -= get_time();
-        start_time(t, 8);
-        row_divide_d(ZHt, sumH2, ZHt);
-        // t[8] += get_time();
-        stop_time(t, 8);
+        row_divide(&ZHt, &sumH2, &ZHt, stream);
 
         // W = W.*ZHt
-        // t[4] -= get_time();
-        start_time(t, 4);
-        element_multiply_d(W, ZHt, W, BLOCK_SIZE);
-        // t[4] += get_time();
-        stop_time(t, 4);
-
-
-        // ------------------------------------
+        element_multiply(W, &ZHt, W, BLOCK_SIZE, stream);
 
         // reset sumW to row vector
-        sumW.dim[1] = sumW.dim[0];
-        sumW.dim[0] = 1;
+        sumW.cols_padded = sumW.rows_padded;
+        sumW.rows_padded = 1;
         // reset sumH2 to col vector
-        sumH2.dim[0] = sumH2.dim[1];
-        sumH2.dim[1] = 1;
-
-        // ---------------------------------------
+        sumH2.rows_padded = sumH2.cols_padded;
+        sumH2.cols_padded = 1;
     }
-
-    // t[0] += get_time();
-    stop_time(t, 0);
-
-
-    // reallocate unpadded device memory
-    allocate_matrix_on_device(&W0);
-    allocate_matrix_on_device(&H0);
-
-    // copy padded matrix to unpadded matrices
-    copy_from_padded(W0, W);
-    copy_from_padded(H0, H);
-
-    // free padded matrices
-    destroy_matrix(&W);
-    destroy_matrix(&H);
-    destroy_matrix(&X);
-
-    // free temp matrices
-    destroy_matrix(&Z);
-    destroy_matrix(&WtZ);
-    destroy_matrix(&ZHt);
-    destroy_matrix(&sumW);
-    destroy_matrix(&sumH2);
-
-    copy_matrix_to_device(&X0);
-    create_matrix_on_device(&WH0, M, N, 0.0);
-
-    // copy device results to host memory
-    copy_matrix_from_device(&W0);
-    copy_matrix_from_device(&H0);
-
-    // evaluate final results
-    matrix_multiply_d(W0, H0, WH0);
-    prev_diff = diff;
-    diff = matrix_difference_norm_d(compute, X0, WH0, MN_params);
-    prev_div = div;
-    div = matrix_div_d(compute, X0, WH0, MN_params);
-    if(verbose) {
-        change = (prev_diff - diff) / prev_diff;
-        printf("max iterations reached\n");
-        printf("i: %4i, error: %6.4f, %% change: %8.5f\n", i, diff, change);
-        change = (prev_div - div) / prev_div;
-        printf("\tfinal div: %8.4e, %% div change: %8.5f\n", div, change);
-
-        printf("\n");
-        if(t != NULL) {
-            for(i = 0; i < TIMERS; i++) printf("t[%i]: %8.3f (%6.2f %%) %s\n", i, t[i], t[i] / t[0] * 100, tname[i]);
-        }
-    }
-
-    // clean up extra reduction memory
-    matrix_difference_norm_d(cleanup, X0, WH0, MN_params);
-    matrix_div_d(cleanup, X0, WH0, MN_params);
-    sum_cols_d(cleanup, W, sumW, M_params);
-    sum_rows_d(cleanup, H, sumH2, N_params);
-
-    // free device memory for unpadded matrices
-    free_matrix_on_device(&W0);
-    free_matrix_on_device(&H0);
-    free_matrix_on_device(&X0);
-
-    // free temp matrices
-    destroy_matrix(&WH0);
-
-    cublasShutdown();
 }
 
-unsigned nextpow2(unsigned x) {
+uint32_t nextpow2(uint32_t x) {
     x = x - 1;
     x = x | (x >> 1);
     x = x | (x >> 2);
@@ -492,4 +178,77 @@ unsigned nextpow2(unsigned x) {
     x = x | (x >> 8);
     x = x | (x >> 16);
     return x + 1;
+}
+
+Matrix read_matrix(std::string file, cudaStream_t stream) {
+    // read Matrix in from file, store in column-major order
+
+    FILE *fp;
+    size_t count;
+
+    uint32_t rows, cols;
+
+    fp = fopen(file.c_str(), "rb");
+    count = fread(&rows, sizeof(uint32_t), 1, fp);
+    if(count < 1) fprintf(stderr, "read_matrix: fread error\n");
+    count = fread(&cols, sizeof(uint32_t), 1, fp);
+    if(count < 1) fprintf(stderr, "read_matrix: fread error\n");
+
+    size_t size = rows * cols;
+    float *temp = (float *) malloc(sizeof(float) * size);
+    count = fread(temp, sizeof(float), size, fp);
+    if(count < size) fprintf(stderr, "read_matrix: fread error\n");
+    fclose(fp);
+
+    Matrix A(temp, rows, cols, stream);
+
+    // make sure no zero elements
+    A.set_epsilon(128, stream);
+
+    free(temp);
+
+    printf("read %s [%ix%i]\n", file.c_str(), A.rows_padded, A.cols_padded);
+
+    return A;
+}
+
+void write_matrix(Matrix *matrix, std::string file, cudaStream_t stream) {
+    // write Matrix to file using column-major order. Dimensions are written as leading ints
+
+    assert(matrix->rows <= matrix->rows_padded);
+    assert(matrix->cols <= matrix->cols_padded);
+
+    float *temp;
+    cudaAssert(cudaMallocHost((void **) &temp, matrix->rows * matrix->cols * sizeof(float)));
+    cudaAssert(cudaMemcpy2DAsync(
+        temp, sizeof(float) * matrix->rows, matrix->data, sizeof(float) * matrix->rows_padded,
+        sizeof(float) * matrix->rows, matrix->cols, cudaMemcpyDeviceToHost, stream
+    ));
+    cudaAssert(cudaStreamSynchronize(stream));
+
+    FILE *fp;
+    size_t count;
+
+    fp = fopen(file.c_str(), "wb");
+
+    count = fwrite(&(matrix->rows), sizeof(uint32_t), 1, fp);
+    if(count < 1) {
+        fprintf(stderr, "write_matrix: fwrite error\n");
+    }
+
+    count = fwrite(&(matrix->cols), sizeof(uint32_t), 1, fp);
+    if(count < 1) {
+        fprintf(stderr, "write_matrix: fwrite error\n");
+    }
+
+    count = fwrite(temp, sizeof(float), matrix->rows * matrix->cols, fp);
+    if(count < (size_t) (matrix->rows * matrix->cols)) {
+        fprintf(stderr, "write_matrix: fwrite error\n");
+    }
+
+    fclose(fp);
+
+    cudaAssert(cudaFreeHost(temp));
+
+    printf("write %s [%ix%i]\n", file.c_str(), matrix->rows, matrix->cols);
 }
