@@ -5,12 +5,59 @@
 #include "matrix.cuh"
 
 #define ITER_CHECK 25     // status printed and convergence check every ITER_CHECK iterations
-#define MAX_ITER 200      // max number of iterations
+#define MAX_ITER 300      // max number of iterations
 #define CONVERGE_THRESH 0 // set to zero to guarantee MAX_ITER iterations, 0.001 is a good value otherwise
+
+__global__ void vertical_stack_d (matrix A, matrix B, matrix stacked) {
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+
+    //assume A.dim = B.dim
+    int rows = A.dim[0];
+    int cols = A.dim[1];
+
+    int index = col + row * cols;
+    int index2 = col + row * cols + (rows * cols);
+
+    float* data_a = A.mat_d;
+    float* data_b = B.mat_d;
+    float* data_out = stacked.mat_d;
+
+    if (col < cols && row < rows) {
+        data_out[index] = data_a[index];
+        data_out[index2] = data_b[index];
+    }
+}
+
+__global__ void horizontal_stack_d (matrix A, matrix B, matrix stacked) {
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+
+    //assume A.dim = B.dim
+    int rows = A.dim[0];
+    int cols = A.dim[1];
+
+    int index = col + row * cols;
+    int index2 = col + cols + (row * cols * 2);
+
+    float* data_a = A.mat_d;
+    float* data_b = B.mat_d;
+    float* data_out = stacked.mat_d;
+
+    if (col < cols && row < rows) {
+        data_out[index] = data_a[index];
+        data_out[index2] = data_b[index];
+    }
+}
 
 void update_div(
     matrix W0, matrix H0, matrix X0, const float thresh, const int32_t max_iter, int32_t verbose, cudaStream_t stream
 );
+
+void update_div_modified(
+    matrix W0, matrix W1, matrix H0, matrix H1, matrix X0, matrix OUT, const float thresh, const int32_t max_iter, int32_t verbose, cudaStream_t stream
+);
+
 uint32_t nextpow2(uint32_t x);
 
 
@@ -21,12 +68,25 @@ int32_t main(int32_t argc, char *argv[]) {
     matrix X = read_matrix("../X.bin", stream);
     matrix H = read_matrix("../H.bin", stream);
 
+    matrix W1 = read_matrix("../W1.bin", stream);
+    matrix H1 = read_matrix("../H1.bin", stream);
+
+    matrix OUT;
+    create_matrix_on_device(&OUT, W.dim[0], H.dim[1], 0.0);
+
     // make sure no zero elements
     matrix_eps_d(X, 128, stream);
     matrix_eps_d(H, 128, stream);
     matrix_eps_d(W, 128, stream);
 
     // iterative nmf minimization
+    int32_t max_iter = 300;
+    update_div_modified(W, W1, H, H1, X, OUT, CONVERGE_THRESH, max_iter, 1, stream);
+
+    write_matrix(W, "../Wout_new.bin");
+    write_matrix(H, "../Hout_new.bin");
+    write_matrix(OUT, "../OUT.bin");
+
     update_div(W, H, X, CONVERGE_THRESH, MAX_ITER, 1, stream);
 
     // write results matrices to binary files
@@ -34,9 +94,14 @@ int32_t main(int32_t argc, char *argv[]) {
     write_matrix(W, "../Wout.bin");
     write_matrix(H, "../Hout.bin");
 
+    fprintf(stdout, "ran update_div \n");
+
+    fprintf(stdout, "ran update_div_modified \n");
+
     destroy_matrix(&W);
     destroy_matrix(&H);
     destroy_matrix(&X);
+    destroy_matrix(&OUT);
 
     return 0;
 }
@@ -211,6 +276,8 @@ void update_div(
         // reset sumH2 to col vector
         sumH2.dim[0] = sumH2.dim[1];
         sumH2.dim[1] = 1;
+
+        fprintf(stderr, "ran iteration %d\n", i);
     }
 
     // copy padded matrix to unpadded matrices
@@ -246,4 +313,320 @@ uint32_t nextpow2(uint32_t x) {
     x = x | (x >> 8);
     x = x | (x >> 16);
     return x + 1;
+}
+
+
+/* 
+convention: 
+W0=D_n 
+W1=D_s
+
+H0=H_n
+H1=H_s
+
+X0=s_xx
+
+OUT = D_s*H_s (should be preallocated)
+
+*/
+void update_div_modified(
+    matrix W0, matrix W1, matrix H0, matrix H1, matrix X0, matrix OUT, const float thresh, const int32_t max_iter, int32_t verbose, cudaStream_t stream
+) {
+    // run iterative multiplicative updates on W,H
+
+    cublasInit();
+
+    matrix W_stacked;
+    matrix H_stacked;
+
+    W_stacked.dim[0] = W0.dim[0];
+    W_stacked.dim[1] = W0.dim[1]*2;
+
+    H_stacked.dim[0] = H0.dim[0]*2;
+    H_stacked.dim[1] = H0.dim[1];
+
+    const int32_t M = W_stacked.dim[0];
+    const int32_t K = W0.dim[1];
+    const int32_t K_stacked = W_stacked.dim[1];
+    const int32_t N = H_stacked.dim[1];
+
+    // pad matrix dimensions to multiples of:
+    const int32_t PAD_MULT = 32;
+
+    int32_t M_padded = M;
+    if(M % PAD_MULT != 0) M_padded = M + (PAD_MULT - (M % PAD_MULT));
+
+    int32_t K_padded = K;
+    if(K % PAD_MULT != 0) K_padded = K + (PAD_MULT - (K % PAD_MULT));
+
+    int32_t K_stacked_pad = K_stacked;
+    if(K % PAD_MULT != 0) K_stacked_pad = K_stacked_pad + (PAD_MULT - (K_stacked % PAD_MULT));
+
+    int32_t N_padded = N;
+    if(N % PAD_MULT != 0) N_padded = N + (PAD_MULT - (N % PAD_MULT));
+
+    // find reduction parameters
+    int32_t N_params[4] = {1, 1, 1, 1}; // N size reductions (rows)
+    int32_t M_params[4] = {1, 1, 1, 1}; // M size reductions (cols)
+
+    int32_t rem;
+    rem = nextpow2(N_padded / 128 + (!(N_padded % 128) ? 0 : 1));
+    if(rem <= 128) {
+        N_params[0] = 128;
+        N_params[1] = rem;
+    } else if(rem <= 512) {
+        N_params[0] = rem;
+        N_params[1] = 128;
+    } else {
+        fprintf(stderr, "reduction parameter error\n");
+        exit(1);
+    }
+
+    rem = nextpow2(M_padded / 128 + (!(M_padded % 128) ? 0 : 1));
+    if(rem <= 128) {
+        M_params[0] = 128;
+        M_params[1] = rem;
+    } else if(rem <= 512) {
+        M_params[0] = rem;
+        M_params[1] = 128;
+    } else {
+        fprintf(stderr, "reduction parameter error\n");
+        exit(1);
+    }
+
+
+
+    // block size in vector arithmetic operations
+    const int32_t BLOCK_SIZE = 128;
+
+    //change these.. placeholders for testing.
+    dim3 grid_dim;
+    grid_dim.x = 1024;
+    grid_dim.y = 1024;
+    grid_dim.z = 1; 
+
+    // initialize temp matrices -----------------------
+
+    // matrix to hold X./(W*H+EPS)
+    matrix Z;
+    create_matrix_on_device(&Z, M_padded, N_padded, 0.0);
+
+    // matrix to hold W'*Z
+    matrix WtZ;
+    create_matrix_on_device(&WtZ, K_padded, N_padded, 0.0);
+
+    // matrix to hold Z*H'
+    matrix ZHt;
+    create_matrix_on_device(&ZHt, M_padded, K_padded, 0.0);
+
+    // matrix to hold sum(W) [sum of cols of W]
+    matrix sumW;
+    create_matrix_on_device(&sumW, 1, K_padded, 0.0);
+
+    // matrix to hold sum(H,2) [sum of rows of H]
+    matrix sumH2;
+    create_matrix_on_device(&sumH2, K_padded, 1, 0.0);
+
+
+    // matrices to hold padded versions of matrices
+    matrix W_s_device;
+    create_matrix_on_device(&W_s_device, M_padded, K_padded, 0.0);
+    matrix W_n_device;
+    create_matrix_on_device(&W_n_device, M_padded, K_padded, 0.0);
+
+    matrix H_s_device;
+    create_matrix_on_device(&H_s_device, K_padded, N_padded, 0.0);
+    matrix H_n_device;
+    create_matrix_on_device(&H_n_device, K_padded, N_padded, 0.0);
+
+    matrix X;
+    create_matrix_on_device(&X, M_padded, N_padded, 0.0);
+
+    create_matrix_on_device(&W_stacked, M, K_stacked, 0.0);
+    matrix W_stacked_pad_d;
+    create_matrix_on_device(&W_stacked_pad_d, M_padded, K_stacked_pad, 0.0);
+
+    create_matrix_on_device(&H_stacked, K_stacked, N, 0.0);
+    matrix H_stacked_pad_d;
+    create_matrix_on_device(&H_stacked_pad_d, K_stacked_pad, N_padded, 0.0);
+
+    // move host matrices to padded device memory
+    copy_matrix_to_device_padded(W0, W_s_device);
+    copy_matrix_to_device_padded(W1, W_n_device);
+    copy_matrix_to_device_padded(H0, H_s_device);
+    copy_matrix_to_device_padded(H1, H_n_device);
+    copy_matrix_to_device_padded(X0, X);
+
+    copy_from_padded(W0, W_s_device);
+    copy_from_padded(W1, W_n_device);
+    horizontal_stack_d<<<grid_dim,BLOCK_SIZE>>>(W0, W1, W_stacked);
+    copy_to_padded(W_stacked, W_stacked_pad_d);
+
+    for(int32_t i = 0; i < max_iter; i++) {
+        /* matlab algorithm
+           Z = X./(W*H+eps); H = H.*(W'*Z)./(repmat(sum(W)',1,F));
+           Z = X./(W*H+eps);
+           W = W.*(Z*H')./(repmat(sum(H,2)',N,1));
+           */
+
+        //
+        // UPDATE H_s -----------------------------
+        //
+
+        copy_from_padded(H0, H_s_device);
+        copy_from_padded(H1, H_n_device);
+        vertical_stack_d<<<grid_dim,BLOCK_SIZE>>>(H0, H1, H_stacked);
+        copy_to_padded(H_stacked, H_stacked_pad_d);
+
+        // WH = W*H
+        matrix_multiply_d(W_stacked_pad_d, H_stacked_pad_d, Z);
+
+        // WH = WH+EPS
+        matrix_eps_d(Z, BLOCK_SIZE, stream);
+
+        // Z = X./WH
+        element_divide_d(X, Z, Z, BLOCK_SIZE);
+
+        // sum cols of W into row vector
+        sum_cols_d(compute, W_s_device, sumW, M_params);
+        matrix_eps_d(sumW, 32, stream);
+
+        // convert sumW to col vector (transpose)
+        sumW.dim[0] = sumW.dim[1];
+        sumW.dim[1] = 1;
+
+        // WtZ = W'*Z
+        matrix_multiply_AtB_d(W_s_device, Z, WtZ);
+
+        // WtZ = WtZ./(repmat(sum(W)',1,H.dim[1])
+        //[element divide cols of WtZ by sumW']
+        col_divide_d(WtZ, sumW, WtZ);
+
+        // H = H.*WtZ
+        element_multiply_d(H_s_device, WtZ, H_s_device, BLOCK_SIZE);
+
+        // reset sumW to row vector
+        sumW.dim[1] = sumW.dim[0];
+        sumW.dim[0] = 1;
+
+        // todo: update W_stacked and H_stacked with new values.
+        
+        //
+        // UPDATE H_n -----------------------------
+        //
+
+        copy_from_padded(H0, H_s_device);
+        copy_from_padded(H1, H_n_device);
+        vertical_stack_d<<<grid_dim,BLOCK_SIZE>>>(H0, H1, H_stacked);
+        copy_to_padded(H_stacked, H_stacked_pad_d);
+
+        // WH = W*H
+        matrix_multiply_d(W_stacked_pad_d, H_stacked_pad_d, Z);
+
+        // WH = WH+EPS
+        matrix_eps_d(Z, BLOCK_SIZE, stream);
+
+        // Z = X./WH
+        element_divide_d(X, Z, Z, BLOCK_SIZE);
+
+        // sum cols of W into row vector
+        sum_cols_d(compute, W_n_device, sumW, M_params);
+        matrix_eps_d(sumW, 32, stream);
+
+        // convert sumW to col vector (transpose)
+        sumW.dim[0] = sumW.dim[1];
+        sumW.dim[1] = 1;
+
+        // WtZ = W'*Z
+        matrix_multiply_AtB_d(W_n_device, Z, WtZ);
+
+        // WtZ = WtZ./(repmat(sum(W)',1,H.dim[1])
+        //[element divide cols of WtZ by sumW']
+        col_divide_d(WtZ, sumW, WtZ);
+
+        // H = H.*WtZ
+        element_multiply_d(H_n_device, WtZ, H_n_device, BLOCK_SIZE);
+
+        // todo: update H_stacked with new values
+
+        //
+        // UPDATE W ---------------------------
+        //
+
+        copy_from_padded(W0, W_s_device);
+        copy_from_padded(W1, W_n_device);
+        horizontal_stack_d<<<grid_dim,BLOCK_SIZE>>>(W0, W1, W_stacked);
+        copy_to_padded(W_stacked, W_stacked_pad_d);
+
+        // WH = W*H
+        matrix_multiply_d(W_stacked_pad_d, H_stacked_pad_d, Z);
+
+        // WH = WH+EPS
+        matrix_eps_d(Z, BLOCK_SIZE, stream);
+
+        // Z = X./WH
+        element_divide_d(X, Z, Z, BLOCK_SIZE);
+
+        // sum rows of H into col vector
+        sum_rows_d(compute, H_s_device, sumH2, N_params);
+        matrix_eps_d(sumH2, 32, stream);
+
+        // convert sumH2 to row vector (transpose)
+        sumH2.dim[1] = sumH2.dim[0];
+        sumH2.dim[0] = 1;
+
+        // ZHt = Z*H'
+        matrix_multiply_ABt_d(Z, H_s_device, ZHt);
+
+        // ZHt = ZHt./(repmat(sum(H,2)',W.dim[0],1)
+        //[element divide rows of ZHt by sumH2']
+        row_divide_d(ZHt, sumH2, ZHt);
+
+        // W = W.*ZHt
+        element_multiply_d(W_s_device, ZHt, W_s_device, BLOCK_SIZE);
+
+        // reset sumW to row vector
+        sumW.dim[1] = sumW.dim[0];
+        sumW.dim[0] = 1;
+        
+        // reset sumH2 to col vector
+        sumH2.dim[0] = sumH2.dim[1];
+        sumH2.dim[1] = 1;
+
+        fprintf(stderr, "ran iteration modified %d\n", i);
+    }
+
+    matrix_multiply_d(W_s_device, H_s_device, Z);
+
+    // copy padded matrix result to unpadded matrices
+    copy_from_padded(OUT, Z);
+
+    //copy_from_padded(W0, W_s_device);
+    //copy_from_padded(H0, H_s_device);
+
+    //todo: check that everything is cleaned up properly.
+
+    // free padded matrices
+    destroy_matrix(&W_stacked_pad_d);
+    destroy_matrix(&H_stacked_pad_d);
+    destroy_matrix(&H_n_device);
+    destroy_matrix(&H_s_device);
+    destroy_matrix(&W_n_device);
+    destroy_matrix(&W_s_device);
+    destroy_matrix(&X);
+
+    // free temp matrices
+    destroy_matrix(&Z);
+    destroy_matrix(&WtZ);
+    destroy_matrix(&ZHt);
+    destroy_matrix(&sumW);
+    destroy_matrix(&sumH2);
+
+    copy_matrix_to_device(&X0, stream);
+
+    // clean up extra reduction memory
+    sum_cols_d(cleanup, W_s_device, sumW, M_params);
+    sum_rows_d(cleanup, H_s_device, sumH2, N_params);
+
+    cublasShutdown();
 }
