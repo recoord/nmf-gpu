@@ -6,6 +6,9 @@ X = np.random.rand(4096, 350).astype(np.float32)
 W = np.random.rand(4096, 128).astype(np.float32)
 H = np.random.rand(128, 350).astype(np.float32)
 
+W1 = np.random.rand(4096, 128).astype(np.float32)
+H1 = np.random.rand(128, 350).astype(np.float32)
+
 def write_matrix_to_file(matrix, filename):
     with open(filename, "wb") as f:
         f.write(struct.pack("ii", *matrix.shape))
@@ -15,3 +18,6 @@ def write_matrix_to_file(matrix, filename):
 write_matrix_to_file(X, "X.bin")
 write_matrix_to_file(W, "W.bin")
 write_matrix_to_file(H, "H.bin")
+
+write_matrix_to_file(W, "W1.bin")
+write_matrix_to_file(H, "H1.bin")

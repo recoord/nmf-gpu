@@ -10,8 +10,54 @@
 #define MAX_ITER 200      // max number of iterations
 #define CONVERGE_THRESH 0 // set to zero to guarantee MAX_ITER iterations, 0.001 is a good value otherwise
 
+__global__ void vertical_stack_d (Matrix *A, Matrix *B, Matrix *stacked) {
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+
+    //assume A.dim = B.dim
+    int rows = A->rows;
+    int cols = A->cols;
+
+    int index = col + row * cols;
+    int index2 = col + row * cols + (rows * cols);
+
+    float* data_a = A->data;
+    float* data_b = B->data;
+    float* data_out = stacked->data;
+
+    if (col < cols && row < rows) {
+        data_out[index] = data_a[index];
+        data_out[index2] = data_b[index];
+    }
+}
+
+__global__ void horizontal_stack_d (Matrix *A, Matrix *B, Matrix *stacked) {
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+
+    //assume A.dim = B.dim
+    int rows = A->rows;
+    int cols = A->cols;
+
+    int index = col + row * cols;
+    int index2 = col + cols + (row * cols * 2);
+
+    float* data_a = A->data;
+    float* data_b = B->data;
+    float* data_out = stacked->data;
+
+    if (col < cols && row < rows) {
+        data_out[index] = data_a[index];
+        data_out[index2] = data_b[index];
+    }
+}
+
 void run_async(
     Matrix *W, Matrix *H, Matrix *X, const float thresh, const uint32_t max_iter, cublasHandle_t cublas_handle,
+    cudaStream_t stream
+);
+void run_async_modified(
+    Matrix *W_n, Matrix *H_n, Matrix *W_s, Matrix *H_s, Matrix *X, const float thresh, const uint32_t max_iter, cublasHandle_t cublas_handle,
     cudaStream_t stream
 );
 void update_h(
@@ -22,9 +68,17 @@ void update_w(
     Matrix *W, Matrix *H, Matrix *X, Matrix *Z, Matrix *sumH2, Matrix *ZHt, uint32_t *N_params, Memory *aux_memory,
     cublasHandle_t cublas_handle, cudaStream_t stream
 );
+void update_w_modified(
+    Matrix *W, Matrix *H, Matrix *W_stacked, Matrix *H_stacked, Matrix *X, Matrix *Z, Matrix *sumH2, Matrix *ZHt, uint32_t *N_params, Memory *aux_memory,
+    cublasHandle_t cublas_handle, cudaStream_t stream
+);
+void update_h_modified( 
+    Matrix *W, Matrix *H, Matrix *W_stacked, Matrix *H_stacked, Matrix *X, Matrix *Z, Matrix *sumW, Matrix *WtZ, uint32_t *M_params, Memory *aux_memory,
+    cublasHandle_t cublas_handle, cudaStream_t stream
+);
 uint32_t nextpow2(uint32_t x);
-Matrix read_matrix(std::string file, cudaStream_t stream);
 void write_matrix(Matrix *matrix, std::string file, cudaStream_t stream);
+Matrix read_matrix(std::string file, cudaStream_t stream);
 
 
 int32_t main(int32_t argc, char *argv[]) {
@@ -38,11 +92,18 @@ int32_t main(int32_t argc, char *argv[]) {
     Matrix H = read_matrix("../H.bin", stream);
     Matrix W = read_matrix("../W.bin", stream);
 
+    Matrix H1 = read_matrix("../H1.bin", stream);
+    Matrix W1 = read_matrix("../W1.bin", stream);
+
     // Run iterative nmf minimization
-    run_async(&W, &H, &X, CONVERGE_THRESH, MAX_ITER, cublas_handle, stream);
+    //run_async(&W, &H, &X, CONVERGE_THRESH, MAX_ITER, cublas_handle, stream);
+
+    run_async_modified(&W, &H, &W1, &H1, &X, CONVERGE_THRESH, MAX_ITER, cublas_handle, stream);
 
     write_matrix(&W, "../Wout.bin", stream);
     write_matrix(&H, "../Hout.bin", stream);
+
+    write_matrix(&X, "../Xout.bin", stream);
 
     cudaAssert(cublasDestroy(cublas_handle));
     cudaAssert(cudaStreamDestroy(stream));
@@ -115,6 +176,77 @@ void run_async(
     }
 }
 
+void run_async_modified(
+    Matrix *W_n, Matrix *H_n, Matrix *W_s, Matrix *H_s, Matrix *X, const float thresh, const uint32_t max_iter, cublasHandle_t cublas_handle,
+    cudaStream_t stream
+) {
+    const uint32_t M = W_n->rows;
+    const uint32_t K = W_n->cols;
+    const uint32_t N = H_n->cols;
+    const uint32_t R = H_n->rows;
+
+    const uint32_t BLOCK_SIZE = 128;
+
+    // find reduction parameters
+    uint32_t N_params[4]; // N size reductions (rows)
+    uint32_t M_params[4]; // M size reductions (cols)
+
+    init_params(N, N_params);
+    init_params(M, M_params);
+
+    Memory aux_memory(512); // auxiliary memory for summing rows/cols. The size should be dynamically allocated
+
+    // initialize temporary matrices
+    Matrix Z(0.0f, M, N, stream);     // Matrix to hold X./(W*H+EPS)
+    Matrix WtZ(0.0f, K, N, stream);   // Matrix to hold W'*Z
+    Matrix ZHt(0.0f, M, K, stream);   // Matrix to hold Z*H'
+    Matrix sumW(0.0f, 1, K, stream);  // Matrix to hold sum(W) [sum of cols of W]
+    Matrix sumH2(0.0f, K, 1, stream); // Matrix to hold sum(H,2) [sum of rows of H]
+
+    Matrix H_stacked(0.0f, 2*R, N, stream); // Matrix to hold [H_s; H_n]
+    Matrix W_stacked(0.0f, M, 2*R, stream); // Matrix to hold [W_s; W_n]
+
+    cudaGraph_t graph;
+    cudaGraphExec_t graph_exec;
+
+    // todo: change these grid dimensions to something reasonable
+    dim3 grid_dim;
+    grid_dim.x = 1024;
+    grid_dim.y = 1024;
+    grid_dim.z = 1;
+
+    vertical_stack_d<<<grid_dim,BLOCK_SIZE>>>(H_s, H_n, &H_stacked);
+    horizontal_stack_d<<<grid_dim,BLOCK_SIZE>>>(W_s, W_n, &W_stacked);
+    fprintf(stdout, "run past stack W and H\n");
+    cudaAssert(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
+    // MatLab algorithm:
+    // Z = X./(W*H+eps); H = H.*(W'*Z)./(repmat(sum(W)',1,F));
+    // Z = X./(W*H+eps);
+    // W = W.*(Z*H')./(repmat(sum(H,2)',N,1));
+
+    // update H_s
+    update_h_modified(W_s, H_s, &W_stacked, &H_stacked, X, &Z, &sumW, &WtZ, M_params, &aux_memory, cublas_handle, stream);
+    vertical_stack_d<<<grid_dim,BLOCK_SIZE>>>(H_s, H_n, &H_stacked);
+
+    // update H_n
+    update_h_modified(W_n, H_n, &W_stacked, &H_stacked, X, &Z, &sumW, &WtZ, M_params, &aux_memory, cublas_handle, stream);
+    vertical_stack_d<<<grid_dim,BLOCK_SIZE>>>(H_s, H_n, &H_stacked);
+
+    // update W_s    
+    update_w_modified(W_s, H_s, &W_stacked, &H_stacked, X, &Z, &sumH2, &ZHt, N_params, &aux_memory, cublas_handle, stream);
+    horizontal_stack_d<<<grid_dim,BLOCK_SIZE>>>(W_s, W_n, &W_stacked);
+
+    cudaAssert(cudaStreamEndCapture(stream, &graph));
+    cudaAssert(cudaGraphInstantiate(&graph_exec, graph, 0));
+
+    for(uint32_t i = 0; i < max_iter; i++) {
+        cudaAssert(cudaGraphLaunch(graph_exec, stream));
+    }
+
+    // update the spectrogram with the new values:
+    matrix_multiply(W_s, H_s, X, cublas_handle);
+}
+
 void update_h(
     Matrix *W, Matrix *H, Matrix *X, Matrix *Z, Matrix *sumW, Matrix *WtZ, uint32_t *M_params, Memory *aux_memory,
     cublasHandle_t cublas_handle, cudaStream_t stream
@@ -153,6 +285,66 @@ void update_w(
 
     // WH = W*H
     matrix_multiply(W, H, Z, cublas_handle);
+
+    // WH = WH+EPS
+    Z->set_epsilon(BLOCK_SIZE, stream);
+
+    // Z = X./WH
+    element_divide(X, Z, Z, BLOCK_SIZE, stream);
+
+    // sum rows of H into col vector
+    H->sum_rows(sumH2, aux_memory, N_params, stream);
+    sumH2->set_epsilon(32, stream);
+
+    // ZHt = Z*H'
+    matrix_multiply_ABt(Z, H, ZHt, cublas_handle);
+
+    // ZHt = ZHt./(repmat(sum(H,2)',W.rows,1)
+    //[element divide rows of ZHt by sumH2']
+    row_divide(ZHt, sumH2, ZHt, stream);
+
+    // W = W.*ZHt
+    element_multiply(W, ZHt, W, BLOCK_SIZE, stream);
+}
+
+void update_h_modified( 
+    Matrix *W, Matrix *H, Matrix *W_stacked, Matrix *H_stacked, Matrix *X, Matrix *Z, Matrix *sumW, Matrix *WtZ, uint32_t *M_params, Memory *aux_memory,
+    cublasHandle_t cublas_handle, cudaStream_t stream
+) {
+    uint32_t BLOCK_SIZE = 128;
+
+    // WH = W*H
+    matrix_multiply(W_stacked, H_stacked, Z, cublas_handle);
+
+    // WH = WH+EPS
+    Z->set_epsilon(BLOCK_SIZE, stream);
+
+    // Z = X./WH
+    element_divide(X, Z, Z, BLOCK_SIZE, stream);
+
+    // sum cols of W into row vector
+    W->sum_cols(sumW, aux_memory, M_params, stream);
+    sumW->set_epsilon(32, stream);
+
+    // WtZ = W'*Z
+    matrix_multiply_AtB(W, Z, WtZ, cublas_handle);
+
+    // WtZ = WtZ./(repmat(sum(W)',1,H.cols)
+    //[element divide cols of WtZ by sumW']
+    col_divide(WtZ, sumW, WtZ, stream);
+
+    // H = H.*WtZ
+    element_multiply(H, WtZ, H, BLOCK_SIZE, stream);
+}
+
+void update_w_modified(
+    Matrix *W, Matrix *H, Matrix *W_stacked, Matrix *H_stacked, Matrix *X, Matrix *Z, Matrix *sumH2, Matrix *ZHt, uint32_t *N_params, Memory *aux_memory,
+    cublasHandle_t cublas_handle, cudaStream_t stream
+) {
+    uint32_t BLOCK_SIZE = 128;
+
+    // WH = W*H
+    matrix_multiply(W_stacked, H_stacked, Z, cublas_handle);
 
     // WH = WH+EPS
     Z->set_epsilon(BLOCK_SIZE, stream);
