@@ -80,7 +80,7 @@ int32_t main(int32_t argc, char *argv[]) {
     matrix_eps_d(W, 128, stream);
 
     // iterative nmf minimization
-    int32_t max_iter = 300;
+    int32_t max_iter = 30;
     update_div_modified(W, W1, H, H1, X, OUT, CONVERGE_THRESH, max_iter, 1, stream);
 
     write_matrix(W, "../Wout_new.bin");
@@ -401,8 +401,8 @@ void update_div_modified(
 
     //change these.. placeholders for testing.
     dim3 grid_dim;
-    grid_dim.x = 1024;
-    grid_dim.y = 1024;
+    grid_dim.x = 2*1024;
+    grid_dim.y = 2*1024;
     grid_dim.z = 1; 
 
     // initialize temp matrices -----------------------
@@ -462,6 +462,11 @@ void update_div_modified(
     horizontal_stack_d<<<grid_dim,BLOCK_SIZE>>>(W0, W1, W_stacked);
     copy_to_padded(W_stacked, W_stacked_pad_d);
 
+    copy_from_padded(H0, H_s_device);
+    copy_from_padded(H1, H_n_device);
+    vertical_stack_d<<<grid_dim,BLOCK_SIZE>>>(H0, H1, H_stacked);
+    copy_to_padded(H_stacked, H_stacked_pad_d);
+
     for(int32_t i = 0; i < max_iter; i++) {
         /* matlab algorithm
            Z = X./(W*H+eps); H = H.*(W'*Z)./(repmat(sum(W)',1,F));
@@ -469,23 +474,19 @@ void update_div_modified(
            W = W.*(Z*H')./(repmat(sum(H,2)',N,1));
            */
 
-        //
-        // UPDATE H_s -----------------------------
-        //
-
-        copy_from_padded(H0, H_s_device);
-        copy_from_padded(H1, H_n_device);
-        vertical_stack_d<<<grid_dim,BLOCK_SIZE>>>(H0, H1, H_stacked);
-        copy_to_padded(H_stacked, H_stacked_pad_d);
 
         // WH = W*H
         matrix_multiply_d(W_stacked_pad_d, H_stacked_pad_d, Z);
-
+        
         // WH = WH+EPS
         matrix_eps_d(Z, BLOCK_SIZE, stream);
 
         // Z = X./WH
         element_divide_d(X, Z, Z, BLOCK_SIZE);
+
+        //
+        // UPDATE H_s -----------------------------
+        //        
 
         // sum cols of W into row vector
         sum_cols_d(compute, W_s_device, sumW, M_params);
@@ -504,30 +505,20 @@ void update_div_modified(
 
         // H = H.*WtZ
         element_multiply_d(H_s_device, WtZ, H_s_device, BLOCK_SIZE);
-
-        // reset sumW to row vector
-        sumW.dim[1] = sumW.dim[0];
-        sumW.dim[0] = 1;
-
-        // todo: update W_stacked and H_stacked with new values.
         
-        //
-        // UPDATE H_n -----------------------------
-        //
-
+        // Stack H
         copy_from_padded(H0, H_s_device);
         copy_from_padded(H1, H_n_device);
         vertical_stack_d<<<grid_dim,BLOCK_SIZE>>>(H0, H1, H_stacked);
         copy_to_padded(H_stacked, H_stacked_pad_d);
 
-        // WH = W*H
-        matrix_multiply_d(W_stacked_pad_d, H_stacked_pad_d, Z);
-
-        // WH = WH+EPS
-        matrix_eps_d(Z, BLOCK_SIZE, stream);
-
-        // Z = X./WH
-        element_divide_d(X, Z, Z, BLOCK_SIZE);
+        // reset sumW to row vector
+        sumW.dim[1] = sumW.dim[0];
+        sumW.dim[0] = 1;
+        
+        //
+        // UPDATE H_n -----------------------------
+        //
 
         // sum cols of W into row vector
         sum_cols_d(compute, W_n_device, sumW, M_params);
@@ -547,25 +538,17 @@ void update_div_modified(
         // H = H.*WtZ
         element_multiply_d(H_n_device, WtZ, H_n_device, BLOCK_SIZE);
 
+        // Stack H
+        copy_from_padded(H0, H_s_device);
+        copy_from_padded(H1, H_n_device);
+        vertical_stack_d<<<grid_dim,BLOCK_SIZE>>>(H0, H1, H_stacked);
+        copy_to_padded(H_stacked, H_stacked_pad_d);
+
         // todo: update H_stacked with new values
 
         //
         // UPDATE W ---------------------------
         //
-
-        copy_from_padded(W0, W_s_device);
-        copy_from_padded(W1, W_n_device);
-        horizontal_stack_d<<<grid_dim,BLOCK_SIZE>>>(W0, W1, W_stacked);
-        copy_to_padded(W_stacked, W_stacked_pad_d);
-
-        // WH = W*H
-        matrix_multiply_d(W_stacked_pad_d, H_stacked_pad_d, Z);
-
-        // WH = WH+EPS
-        matrix_eps_d(Z, BLOCK_SIZE, stream);
-
-        // Z = X./WH
-        element_divide_d(X, Z, Z, BLOCK_SIZE);
 
         // sum rows of H into col vector
         sum_rows_d(compute, H_s_device, sumH2, N_params);
@@ -584,6 +567,12 @@ void update_div_modified(
 
         // W = W.*ZHt
         element_multiply_d(W_s_device, ZHt, W_s_device, BLOCK_SIZE);
+
+        // Stack W
+        copy_from_padded(W0, W_s_device);
+        copy_from_padded(W1, W_n_device);
+        horizontal_stack_d<<<grid_dim,BLOCK_SIZE>>>(W0, W1, W_stacked);
+        copy_to_padded(W_stacked, W_stacked_pad_d);
 
         // reset sumW to row vector
         sumW.dim[1] = sumW.dim[0];
