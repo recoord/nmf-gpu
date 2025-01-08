@@ -10,27 +10,6 @@
 #define MAX_ITER 200      // max number of iterations
 #define CONVERGE_THRESH 0 // set to zero to guarantee MAX_ITER iterations, 0.001 is a good value otherwise
 
-__global__ void vertical_stack_d (Matrix *A, Matrix *B, Matrix *stacked) {
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-
-    //assume A.dim = B.dim
-    int rows = A->rows;
-    int cols = A->cols;
-
-    int index = col + row * cols;
-    int index2 = col + row * cols + (rows * cols);
-
-    float* data_a = A->data;
-    float* data_b = B->data;
-    float* data_out = stacked->data;
-
-    if (col < cols && row < rows) {
-        data_out[index] = data_a[index];
-        data_out[index2] = data_b[index];
-    }
-}
-
 __global__ void horizontal_stack_d (Matrix *A, Matrix *B, Matrix *stacked) {
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -98,9 +77,10 @@ int32_t main(int32_t argc, char *argv[]) {
     // Run iterative nmf minimization
     //run_async(&W, &H, &X, CONVERGE_THRESH, MAX_ITER, cublas_handle, stream);
 
-    run_async_modified(&W, &H, &W1, &H1, &X, CONVERGE_THRESH, MAX_ITER, cublas_handle, stream);
+    run_async_modified(&W, &H, &W1, &H1, &X, CONVERGE_THRESH, 3, cublas_handle, stream);
 
     write_matrix(&W, "../Wout.bin", stream);
+    write_matrix(&W1, "../W1out.bin", stream);
     write_matrix(&H, "../Hout.bin", stream);
 
     write_matrix(&X, "../Xout.bin", stream);
@@ -205,32 +185,27 @@ void run_async_modified(
 
     Matrix H_stacked(0.0f, K_stacked, N, stream); // Matrix to hold [H_s; H_n]
     Matrix W_stacked(0.0f, M, K_stacked, stream); // Matrix to hold [W_s; W_n]
+    Matrix W_stacked_transpose(0.0f, K_stacked, M, stream); // Matrix to hold [W_s; W_n]
+    Matrix W_n_transpose(0.0f, K, M, stream);
+    Matrix W_s_transpose(0.0f, K, M, stream);
 
     cudaGraph_t graph;
     cudaGraphExec_t graph_exec;
 
-    // todo: change these grid dimensions to something reasonable
-    dim3 grid_dim;
-    grid_dim.x = 1024;
-    grid_dim.y = 1024;
-    grid_dim.z = 1;
+    stack_horizontally(H_s, H_n, &H_stacked, stream);
+    stack_vertically(W_s, W_n, &W_s_transpose, &W_n_transpose, &W_stacked, &W_stacked_transpose, cublas_handle, stream);
 
-    vertical_stack_d<<<grid_dim,BLOCK_SIZE>>>(H_s, H_n, &H_stacked);
-    horizontal_stack_d<<<grid_dim,BLOCK_SIZE>>>(W_s, W_n, &W_stacked);
-    fprintf(stdout, "run past stack W and H\n");
     cudaAssert(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
-    fprintf(stdout, "run past cudaStreamBeginCapture\n");
     // update H_s
     update_h_modified(W_s, H_s, &W_stacked, &H_stacked, X, &Z, &sumW, &WtZ, M_params, &aux_memory, cublas_handle, stream);
-    vertical_stack_d<<<grid_dim,BLOCK_SIZE>>>(H_s, H_n, &H_stacked);
-
+    stack_horizontally(H_s, H_n, &H_stacked, stream);
     // update H_n
     update_h_modified(W_n, H_n, &W_stacked, &H_stacked, X, &Z, &sumW, &WtZ, M_params, &aux_memory, cublas_handle, stream);
-    vertical_stack_d<<<grid_dim,BLOCK_SIZE>>>(H_s, H_n, &H_stacked);
+    stack_horizontally(H_s, H_n, &H_stacked, stream);
 
     // update W_s    
     update_w_modified(W_s, H_s, &W_stacked, &H_stacked, X, &Z, &sumH2, &ZHt, N_params, &aux_memory, cublas_handle, stream);
-    horizontal_stack_d<<<grid_dim,BLOCK_SIZE>>>(W_s, W_n, &W_stacked);
+    stack_vertically(W_s, W_n, &W_s_transpose, &W_n_transpose, &W_stacked, &W_stacked_transpose, cublas_handle, stream);
 
     cudaAssert(cudaStreamEndCapture(stream, &graph));
     cudaAssert(cudaGraphInstantiate(&graph_exec, graph, 0));
@@ -310,11 +285,8 @@ void update_h_modified(
     uint32_t BLOCK_SIZE = 128;
 
     // WH = W*H
-    fprintf(stdout, "W(%d,%d), H(%d,%d) \n", W_stacked->rows, W_stacked->cols, H_stacked->rows, H_stacked->cols);
-
-    fprintf(stdout, "before matrix multiply W_stacked, H_stacked\n");
     matrix_multiply(W_stacked, H_stacked, Z, cublas_handle);
-    fprintf(stdout, "matrix multiply W_stacked, H_stacked OK\n");
+
     // WH = WH+EPS
     Z->set_epsilon(BLOCK_SIZE, stream);
 
@@ -424,6 +396,10 @@ void write_matrix(Matrix *matrix, std::string file, cudaStream_t stream) {
 
     FILE *fp;
     size_t count;
+
+    for(int i = 0; i < 100; i++){
+        printf("val:%f\n",temp[i]);
+    }
 
     fp = fopen(file.c_str(), "wb");
 

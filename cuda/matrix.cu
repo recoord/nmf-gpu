@@ -746,3 +746,60 @@ void grid2d(dim3 *grid) {
     grid->y = y;
     grid->x = grid->x / y + (!(grid->x % y) ? 0 : 1);
 }
+
+void stack_horizontally(Matrix *A, Matrix *B, Matrix *stacked, cudaStream_t stream) {
+    size_t offset = A->rows*A->cols;
+    size_t data_size = offset*sizeof(float);
+
+
+    // TODO Use cudaMemcpy2DAsync to deal with the padding, this doesn't work for padded data.
+    cudaAssert(cudaMemcpyAsync(stacked->data, A->data, data_size, cudaMemcpyDeviceToDevice, stream));
+    cudaAssert(cudaMemcpyAsync(stacked->data + offset, B->data, data_size, cudaMemcpyDeviceToDevice, stream));
+}
+
+// TODO Use cudaMemcpy2DAsync to deal with the padding, this doesn't work for padded data.
+void stack_vertically(Matrix *A, Matrix *B, Matrix *A_T_allocated, Matrix *B_T_allocated, Matrix *stacked, Matrix *stacked_T_allocated, cublasHandle_t cublas_handle, cudaStream_t stream) {
+
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+    const uint32_t rows = A->rows;
+    const uint32_t cols = A->cols;
+
+    // these ccublasSgeam calls copies data in row major order. 
+
+    cublasSgeam(cublas_handle,
+                CUBLAS_OP_T, CUBLAS_OP_N,  
+                cols, rows,              
+                &alpha, A->data, rows,        
+                &beta, A->data, rows,   
+                A_T_allocated->data, cols              
+    );
+
+    cublasSgeam(cublas_handle,
+                CUBLAS_OP_T, CUBLAS_OP_N,  
+                cols, rows,              
+                &alpha, B->data, rows,        
+                &beta, B->data, rows,   
+                B_T_allocated->data, cols              
+    );
+
+    stack_horizontally(A_T_allocated, B_T_allocated, stacked_T_allocated, stream);
+
+    const uint32_t stacked_rows = stacked->rows;
+    const uint32_t stacked_cols = stacked->cols;
+
+    cublasSgeam(cublas_handle,
+                CUBLAS_OP_T, CUBLAS_OP_N,  
+                stacked_rows, stacked_cols,              
+                &alpha, stacked_T_allocated->data, stacked_cols,        
+                &beta,  stacked->data, stacked_rows,   
+                stacked->data, stacked_rows              
+    );
+
+
+    //psuedocode:
+    //transpose A
+    //transpose B
+    // stack A,B vertically, store in C
+    // transpose C
+}

@@ -50,3 +50,9 @@ void element_divide(Matrix *a, Matrix *b, Matrix *c, uint32_t block_size, cudaSt
 // row/col-wise
 void row_divide(Matrix *a, Matrix *b, Matrix *c, cudaStream_t stream);
 void col_divide(Matrix *a, Matrix *b, Matrix *c, cudaStream_t stream);
+
+//stack matrices
+void stack_horizontally(Matrix *A, Matrix *B, Matrix *stacked, cudaStream_t stream);
+
+// use that [A,B] = [A.T;B.T].T
+void stack_vertically(Matrix *A, Matrix *B, Matrix *A_T_allocated, Matrix *B_T_allocated, Matrix *stacked, Matrix *stacked_T_allocated, cublasHandle_t cublas_handle, cudaStream_t stream);
